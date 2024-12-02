@@ -8,7 +8,7 @@ The underlying code is written in C++ and a Python ctypes-based wrapper is provi
 
 #### Usage:
 
-Please refer to the two examples in the files PY_smoothing_on_sphere_example_A_kdtree.py and PY_smoothing_on_sphere_example_B_overlap_detection.py to see how the package can be used in practice. 
+To see how the package can be used in practice, please refer to the three examples in the files PY_smoothing_on_sphere_example_A_kdtree.py, PY_smoothing_on_sphere_example_B_overlap_detection.py, and PY_smoothing_on_sphere_example_C_missing_data.py 
 
 #### Author:
 
