@@ -1,0 +1,4 @@
+
+// Compile command for a linux system
+
+g++ -fopenmp -O2 -Wall -Wno-unused-result -Wno-unknown-pragmas -shared -o smoothing_on_sphere_Cxx_shared_library.so -fPIC CC_smoothing_on_sphere_python_lib.cc
