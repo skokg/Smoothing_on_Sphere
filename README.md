@@ -18,4 +18,4 @@ Email: Gregor.Skok@fmf.uni-lj.si
 
 #### References:
 
-Skok, G. (2024) Smoothing of global fields. Preprint. ArXiv, https://doi.org/10.48550/arXiv.2412.00936
+Skok, G. (2024) Smoothing and spatial verification of global fields. Preprint. ArXiv, https://doi.org/10.48550/arXiv.2412.00936
