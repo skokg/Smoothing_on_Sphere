@@ -37,12 +37,12 @@ long random_number_seed=-1;
 #include "CU_smoothing_on_sphere_code.cc"
 
 
-extern "C" void free_mem_double_array(double* a)
+extern "C" void free_mem_double_array(double * const a)
 	{
 	delete[] a;
 	}
 
-extern "C"  void * construct_KdTree_ctypes(const double *lat, const double *lon, size_t size)
+extern "C"  void * construct_KdTree_ctypes(const double * const lat, const double * const lon, const size_t size)
 	{
 
 	vector <kdtree::Point_str> kdtree_points = generate_vector_of_kdtree_points_from_lat_lon_points_provided_as_arrays(lat, lon, size);
@@ -56,20 +56,39 @@ extern "C"  void * construct_KdTree_ctypes(const double *lat, const double *lon,
 	return((void*)kdtree);
 	}
 
-extern "C"  void free_KdTree_memory_ctypes(void *kdtree_void_pointer)
+extern "C"  void free_KdTree_memory_ctypes(void * const kdtree_void_pointer)
 	{
 	kdtree::KdTree *kdtree = (kdtree::KdTree*) kdtree_void_pointer;
 	kdtree->free_memory();
 	}
 
-extern "C"  void smooth_field_using_KdTree_ctypes(const double r_kernel_in_metres, const void *kdtree_void_pointer, const double *lat, const double *lon, const double *area_size, const double *f,  size_t number_of_points, double *f_smoothed)
+extern "C"  void smooth_field_using_KdTree_ctypes(const double r_kernel_in_metres, const void * const kdtree_void_pointer, const double * const lat, const double * const lon, const double * const area_size, const double * const f,  const size_t number_of_points, double * const f_smoothed)
 	{
-	kdtree::KdTree *kdtree = (kdtree::KdTree*) kdtree_void_pointer;
+	const kdtree::KdTree * const kdtree = (const kdtree::KdTree * const) kdtree_void_pointer;
 
 	smooth_field_using_kd_tree(r_kernel_in_metres, *kdtree, lat, lon, area_size, f, number_of_points, f_smoothed);
 	}
 
-extern "C"  void generate_smoothing_data_for_the_overlap_detection_and_write_it_to_disk_ctypes(const double *lat, const double *lon, size_t number_of_points, const double *smoothing_kernel_radius_in_metres, size_t smoothing_kernel_radius_in_metres_size, const char* output_folder_char, size_t starting_point)
+extern "C"  void smooth_multiple_fields_simultaneously_using_KdTree_ctypes(const double r_kernel_in_metres, const void * const kdtree_void_pointer, const double * const lat, const double * const lon, const double * const area_size_multiple_fields_2D_numpy_array, const double * const f_multiple_fields_2D_numpy_array,  const size_t number_of_points, const size_t number_of_fields, double * const f_smoothed_multiple_fields_2D_numpy_array)
+	{
+	const kdtree::KdTree * const kdtree = (const kdtree::KdTree * const) kdtree_void_pointer;
+
+	vector <double*> area_size_pointers;
+	for (size_t iff=0; iff < number_of_fields; iff++)
+		area_size_pointers.push_back((double *)area_size_multiple_fields_2D_numpy_array + iff*number_of_points);
+
+	vector <double*> f_pointers;
+	for (size_t iff=0; iff < number_of_fields; iff++)
+		f_pointers.push_back((double *)f_multiple_fields_2D_numpy_array + iff*number_of_points);
+
+	vector <double*> f_smoothed_pointers;
+	for (size_t iff=0; iff < number_of_fields; iff++)
+		f_smoothed_pointers.push_back((double *)f_smoothed_multiple_fields_2D_numpy_array + iff*number_of_points);
+
+	smooth_field_using_kd_tree_multiple_fields_simultaneously(r_kernel_in_metres, *kdtree, lat, lon, &area_size_pointers[0], &f_pointers[0], number_of_points, number_of_fields, &f_smoothed_pointers[0]);
+	}
+
+extern "C"  void generate_smoothing_data_for_the_overlap_detection_and_write_it_to_disk_ctypes(const double * const lat, const double * const lon, const size_t number_of_points, const double * const smoothing_kernel_radius_in_metres, const size_t smoothing_kernel_radius_in_metres_size, const char * const output_folder_char, const size_t starting_point)
 	{
 
 	vector <double> smoothing_kernel_radius_in_metres_vector;
@@ -84,7 +103,7 @@ extern "C"  void generate_smoothing_data_for_the_overlap_detection_and_write_it_
 	generate_smoothing_data_for_the_overlap_detection_and_write_it_to_disk(lat, lon, number_of_points, smoothing_kernel_radius_in_metres_vector, output_folder, starting_point);
 	}
 
-extern "C"  void * read_smoothing_data_from_binary_file_ctypes(const char* output_folder_char, const double smoothing_kernel_radius_in_metres, const size_t number_of_points)
+extern "C"  void * read_smoothing_data_from_binary_file_ctypes(const char * const output_folder_char, const double smoothing_kernel_radius_in_metres, const size_t number_of_points)
 	{
 	uint32_t number_of_points_uint32_t = number_of_points;
 
@@ -98,14 +117,14 @@ extern "C"  void * read_smoothing_data_from_binary_file_ctypes(const char* outpu
 	return((void*) data_pointer);
 	}
 
-extern "C"  void free_smoothing_data_memory_ctypes(void *data_pointer_void, size_t number_of_points)
+extern "C"  void free_smoothing_data_memory_ctypes(void * data_pointer_void, const size_t number_of_points)
 	{
 	uint32_t** data_pointer = (uint32_t **)data_pointer_void;
 	free_smoothing_data_memory(data_pointer, (uint32_t)number_of_points);
 	data_pointer_void = nullptr;
 	}
 
-extern "C"  void smooth_field_using_overlap_detection_ctypes(const double *area_size, const double *f, size_t number_of_points, const void *data_pointer_void, double *f_smoothed)
+extern "C"  void smooth_field_using_overlap_detection_ctypes(const double * const area_size, const double * const f, const size_t number_of_points, const void * const data_pointer_void, double * const f_smoothed)
 	{
 	smooth_field_using_overlap_detection(area_size, f, number_of_points, (uint32_t **)data_pointer_void,  f_smoothed);
 	}

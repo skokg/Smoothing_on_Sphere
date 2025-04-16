@@ -2,17 +2,17 @@
 
 double Earth_radius= 6371*1000;
 
-double great_circle_distance_to_euclidian_distance(double great_circle_distance)
+double great_circle_distance_to_euclidian_distance(const double great_circle_distance)
 	{
 	return(2*Earth_radius*sin(great_circle_distance/(2*Earth_radius)));
 	}
 
-double euclidian_distance_to_great_circle_distance(double euclidian_distance)
+double euclidian_distance_to_great_circle_distance(const double euclidian_distance)
 	{
 	return(2*Earth_radius*asin(euclidian_distance/(2*Earth_radius)));
 	}
 
-void generate_fxareasize_and_areasize_Bounding_Box_data(const std::shared_ptr<kdtree::KdTreeNode>& node, const double *&f, const double *&area_size,  vector <double> &fxareasize_BB_data, vector <double> &area_size_BB_data)
+void generate_fxareasize_and_areasize_Bounding_Box_data(const std::shared_ptr<const kdtree::KdTreeNode>& node, const double * const f, const double * const area_size,  vector <double> &fxareasize_BB_data, vector <double> &area_size_BB_data)
 	{
 	size_t index = node->val.index;
 	double fxareasize_BB = f[index]*area_size[index];
@@ -35,7 +35,45 @@ void generate_fxareasize_and_areasize_Bounding_Box_data(const std::shared_ptr<kd
 	}
 
 
-void get_fxareasize_and_areasize_sums_of_points_in_radius( const std::shared_ptr<kdtree::KdTreeNode>& node, const kdtree::KdTree &kdtree, const kdtree::Point_str& point, const float &distance, const float &distance_sqaured, const vector <double> &fxareasize, const double *&areasize, const vector <double> &fxareasize_BB_data, const vector <double> &area_size_BB_data, double &fxareasize_sum, double &areasize_sum)
+void generate_fxareasize_and_areasize_Bounding_Box_data_multiple_fields_simultaneously(const std::shared_ptr<const kdtree::KdTreeNode>& node, const double * const * const f, const double * const * const area_size,  const size_t number_of_fields, vector <vector <double>> &fxareasize_BB_data, vector <vector <double>> &area_size_BB_data  )
+	{
+	size_t index = node->val.index;
+	vector <double> fxareasize_BB (number_of_fields,0);
+	vector <double> areasize_BB (number_of_fields,0);
+	for (unsigned long iff=0; iff < number_of_fields; iff++)
+		{
+		fxareasize_BB[iff] = f[iff][index]*area_size[iff][index];
+		areasize_BB[iff] = area_size[iff][index];
+		}
+	if(node->leftNode != nullptr)
+		{
+		generate_fxareasize_and_areasize_Bounding_Box_data_multiple_fields_simultaneously(node->leftNode, f, area_size, number_of_fields, fxareasize_BB_data, area_size_BB_data);
+		for (unsigned long iff=0; iff < number_of_fields; iff++)
+			{
+			fxareasize_BB[iff] += fxareasize_BB_data[iff][node->leftNode->val.index];
+			areasize_BB[iff] += area_size_BB_data[iff][node->leftNode->val.index];
+			}
+		}
+	if(node->rightNode != nullptr)
+		{
+		generate_fxareasize_and_areasize_Bounding_Box_data_multiple_fields_simultaneously(node->rightNode, f, area_size, number_of_fields, fxareasize_BB_data, area_size_BB_data);
+		for (unsigned long iff=0; iff < number_of_fields; iff++)
+			{
+			fxareasize_BB[iff] += fxareasize_BB_data[iff][node->rightNode->val.index];
+			areasize_BB[iff] += area_size_BB_data[iff][node->rightNode->val.index];
+			}
+		}
+
+	for (unsigned long iff=0; iff < number_of_fields; iff++)
+		{
+		fxareasize_BB_data[iff][index] =fxareasize_BB[iff];
+		area_size_BB_data[iff][index] =areasize_BB[iff];
+		}
+	}
+
+
+
+void get_fxareasize_and_areasize_sums_of_points_in_radius( const std::shared_ptr<const kdtree::KdTreeNode>& node, const kdtree::KdTree &kdtree, const kdtree::Point_str& point, const float distance, const float distance_sqaured, const vector <double> &fxareasize, const double * const areasize, const vector <double> &fxareasize_BB_data, const vector <double> &area_size_BB_data, double &fxareasize_sum, double &areasize_sum)
 	{
 
 	if(node == nullptr) return;
@@ -67,6 +105,43 @@ void get_fxareasize_and_areasize_sums_of_points_in_radius( const std::shared_ptr
 		}
 	}
 
+void get_fxareasize_and_areasize_sums_of_points_in_radius_multiple_fields_simultaneously( const std::shared_ptr<const kdtree::KdTreeNode>& node, const kdtree::KdTree &kdtree, const kdtree::Point_str& point, const float distance, const float distance_sqaured, const vector <vector <double>> &fxareasize, const double * const * const areasize, const vector <vector <double>> &fxareasize_BB_data, const vector <vector <double>> &area_size_BB_data, vector <double> &fxareasize_sum, vector <double> &areasize_sum, const size_t number_of_fields)
+	{
+
+	if(node == nullptr) return;
+
+	if (kdtree.test_if_the_hypersphere_and_hyperrectangle_intersect_using_sqr_radius( point.coords, distance_sqaured, node->coords_min, node->coords_max ))
+		{
+		float dist_sqr = kdtree.calDist_sqr(point, node->val);
+		bool inside_sphere = false;
+		if(dist_sqr < distance_sqaured)
+			inside_sphere = true;
+
+		if (inside_sphere && kdtree.test_if_the_hyperrectangle_is_fully_inside_the_sphere_using_sqr_radius( point.coords, distance_sqaured, node->coords_min, node->coords_max))
+			{
+			for (unsigned long iff=0; iff < number_of_fields; iff++)
+				{
+				fxareasize_sum[iff]+=fxareasize_BB_data[iff][node->val.index];
+				areasize_sum[iff]+=area_size_BB_data[iff][node->val.index];
+				}
+			}
+
+		else
+			{
+			if (inside_sphere)
+				{
+				for (unsigned long iff=0; iff < number_of_fields; iff++)
+					{
+					fxareasize_sum[iff]+=fxareasize[iff][node->val.index];
+					areasize_sum[iff]+=areasize[iff][node->val.index];
+					}
+				}
+
+			get_fxareasize_and_areasize_sums_of_points_in_radius_multiple_fields_simultaneously(node->rightNode, kdtree, point, distance, distance_sqaured, fxareasize, areasize, fxareasize_BB_data, area_size_BB_data,fxareasize_sum, areasize_sum, number_of_fields );
+			get_fxareasize_and_areasize_sums_of_points_in_radius_multiple_fields_simultaneously(node->leftNode, kdtree, point, distance, distance_sqaured, fxareasize, areasize, fxareasize_BB_data, area_size_BB_data,fxareasize_sum, areasize_sum, number_of_fields );
+			}
+		}
+	}
 
 vector <kdtree::Point_str> generate_vector_of_kdtree_points_from_lat_lon_points(const vector <double> &lat, const vector <double> &lon)
 	{
@@ -87,7 +162,7 @@ vector <kdtree::Point_str> generate_vector_of_kdtree_points_from_lat_lon_points(
 	return(kdtree_points);
 	}
 
-vector <kdtree::Point_str> generate_vector_of_kdtree_points_from_lat_lon_points_provided_as_arrays(const double *&lat, const double *&lon, size_t size)
+vector <kdtree::Point_str> generate_vector_of_kdtree_points_from_lat_lon_points_provided_as_arrays(const double * const lat, const double * const lon, const size_t size)
 	{
 	// create kdtree points
 	vector <kdtree::Point_str> kdtree_points (size,{{(float)0,(float)0,(float)0},(size_t)-1});
@@ -104,9 +179,10 @@ vector <kdtree::Point_str> generate_vector_of_kdtree_points_from_lat_lon_points_
 	return(kdtree_points);
 	}
 
-void smooth_field_using_kd_tree(double r_kernel_in_metres, const kdtree::KdTree &kdtree, const double *lat, const double *lon, const double *area_size, const double *f, const size_t number_of_points, double *f_smoothed)
+void smooth_field_using_kd_tree(const double r_kernel_in_metres, const kdtree::KdTree &kdtree, const double * const lat, const double * const lon, const double * const area_size, const double * const f, const size_t number_of_points, double * const f_smoothed)
 	{
 
+	auto begin3 = std::chrono::high_resolution_clock::now();
 	vector <double> fxareasize (number_of_points,0);
 	for (unsigned long il=0; il < number_of_points; il++)
 		fxareasize[il] = f[il]*area_size[il];
@@ -136,7 +212,6 @@ void smooth_field_using_kd_tree(double r_kernel_in_metres, const kdtree::KdTree 
 
 	long couter_threshold = number_of_points/100;
 
-	auto begin3 = std::chrono::high_resolution_clock::now();
 	//#pragma omp parallel for num_threads(NUMBER_OF_THREADS)
 	//#pragma omp parallel for num_threads(NUMBER_OF_THREADS) schedule(static, 10)
 	#pragma omp parallel for num_threads(NUMBER_OF_THREADS) schedule(dynamic,200)
@@ -165,6 +240,75 @@ void smooth_field_using_kd_tree(double r_kernel_in_metres, const kdtree::KdTree 
 	cout << "----- smoothing " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin3).count() * 1e-9 << " s" << endl;
 
 	//return(f_smoothed);
+	}
+
+void smooth_field_using_kd_tree_multiple_fields_simultaneously(const double r_kernel_in_metres, const kdtree::KdTree &kdtree, const double * const lat, const double * const lon, const double * const * const area_size, const double * const * const f, const size_t number_of_points, const size_t number_of_fields, double * const * const f_smoothed)
+	{
+
+	auto begin3 = std::chrono::high_resolution_clock::now();
+	vector <vector <double>> fxareasize (number_of_fields, vector <double> (number_of_points,0));
+	//vector <double> fxareasize (number_of_points,0);
+	for (unsigned long iff=0; iff < number_of_fields; iff++)
+		for (unsigned long il=0; il < number_of_points; il++)
+			fxareasize[iff][il] = f[iff][il]*area_size[iff][il];
+	//cout << sum_vector(fxareasize) << endl;
+	//cout << sum_vector(area_size) << endl;
+
+	vector <vector <double>> fxareasize_BB_data (number_of_fields, vector <double> (number_of_points,0));
+	vector <vector <double>> area_size_BB_data (number_of_fields, vector <double> (number_of_points,0));
+
+	generate_fxareasize_and_areasize_Bounding_Box_data_multiple_fields_simultaneously(kdtree.root, f, area_size, number_of_fields, fxareasize_BB_data, area_size_BB_data);
+
+	//cout << " ------------- " << endl;
+	//cout << kdtree.root->val.index << endl;
+	//cout << fxareasize_BB_data[kdtree.root->val.index] << endl;
+	//cout << area_size_BB_data[kdtree.root->val.index] << endl;
+	//cout << fxareasize_BB_data[kdtree.root->rightNode->val.index] << endl;
+	//cout << fxareasize_BB_data[kdtree.root->leftNode->val.index] << endl;
+
+
+	float r_Tunel_Distance = great_circle_distance_to_euclidian_distance(r_kernel_in_metres);
+	//cout << "r_kernel: " << r_kernel << endl;
+	//cout << "r_Tunel_Distance: " << r_Tunel_Distance << endl;
+	float r_Tunel_Distance_squared = r_Tunel_Distance * r_Tunel_Distance;
+
+
+	//vector <double> f_smoothed (number_of_points,0);
+
+	long couter_threshold = number_of_points/100;
+
+	//#pragma omp parallel for num_threads(NUMBER_OF_THREADS)
+	//#pragma omp parallel for num_threads(NUMBER_OF_THREADS) schedule(static, 10)
+	#pragma omp parallel for num_threads(NUMBER_OF_THREADS) schedule(dynamic,1000)
+	for (unsigned long il=0; il < number_of_points; il++)
+	//for (unsigned long il=0; il < lat.size(); il++)
+		{
+		if (il % couter_threshold ==0)
+		 cout << "-- " << round_to_digits ( (double)il / (double)number_of_points * 100.0 , 1) << " % " << endl;
+
+		vector <double> fxareasize_sum (number_of_fields,0);
+		vector <double> areasize_sum (number_of_fields,0);
+
+		double x,y,z;
+		spherical_to_cartesian_coordinates(deg2rad(lat[il]), deg2rad(lon[il]), Earth_radius, x, y, z);
+
+		get_fxareasize_and_areasize_sums_of_points_in_radius_multiple_fields_simultaneously(kdtree.root, kdtree, {{(float)x, (float)y,(float)z},(size_t)il}, r_Tunel_Distance, r_Tunel_Distance_squared, fxareasize, area_size, fxareasize_BB_data, area_size_BB_data, fxareasize_sum, areasize_sum, number_of_fields);
+
+		for (unsigned long iff=0; iff < number_of_fields; iff++)
+			{
+			if (area_size[iff][il] > 0)
+				f_smoothed[iff][il] = fxareasize_sum[iff]/areasize_sum[iff];
+			else
+				f_smoothed[iff][il] = 0;
+			}
+
+		//f_smoothed.set(ix,iy,sum/(double)node_list.size());
+		//cout << il << " " << f_smoothed[il]<< endl;
+		}
+	cout << "----- smoothing " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin3).count() * 1e-9 << " s" << endl;
+
+	//return(f_smoothed);
+
 	}
 
 void Read_smoothing_data_from_binary_file(const string &fname, uint32_t **&data_pointer, const uint32_t &number_of_points)
@@ -264,7 +408,7 @@ void calculate_sqr_distance_to_all_points_in_a_vector(const float &x_p, const fl
 	}
 
 
-void generate_smoothing_data_for_the_overlap_detection_and_write_it_to_disk(const double *lat, const double *lon, size_t number_of_points, vector <double> smoothing_kernel_radius_in_metres, string output_folder, size_t starting_point)
+void generate_smoothing_data_for_the_overlap_detection_and_write_it_to_disk(const double * const lat, const double * const lon, const size_t number_of_points, const vector <double> &smoothing_kernel_radius_in_metres, const string output_folder, const size_t starting_point)
 	{
 
 	cout << "----- Generating smoothing sequence for the points " << endl;
@@ -515,7 +659,7 @@ void generate_smoothing_data_for_the_overlap_detection_and_write_it_to_disk(cons
 
 
 
-void smooth_field_using_overlap_detection(const double *area_size, const double *f, const size_t number_of_points, uint32_t **data_pointer,  double *f_smoothed)
+void smooth_field_using_overlap_detection(const double * const area_size, const double * const f, const size_t number_of_points, const uint32_t * const * const data_pointer,  double * const f_smoothed)
 	{
 
 	vector <double> f_x_area (number_of_points,0);
@@ -535,7 +679,7 @@ void smooth_field_using_overlap_detection(const double *area_size, const double 
 		double partial_f_x_area_sum=0;
 		double partial_area_sum=0;
 
-		uint32_t *data_pointer_for_point = data_pointer[il];
+		const uint32_t * const data_pointer_for_point = data_pointer[il];
 
 		// terms from added points
 		uint32_t start_index = 4;
@@ -565,7 +709,7 @@ void smooth_field_using_overlap_detection(const double *area_size, const double 
 	for (uint32_t il = 0; il < number_of_points; il++)
 		{
 
-		uint32_t *data_pointer_for_point = data_pointer[il];
+		const uint32_t * const data_pointer_for_point = data_pointer[il];
 
 		uint32_t current_smoothing_point = data_pointer_for_point[0];
 		uint32_t previous_smoothing_point = data_pointer_for_point[1];

@@ -13,7 +13,7 @@ from netCDF4 import Dataset
 # ------------------------------------------------------------------------------------------------------------------------
 # Read the sample precipiation field that is defined in two-dimenstions on a regular 0.25deg lat/long grid  -----------------------------------------------------------------------------------------------------------------------
 
-nc_file_id = Dataset("PY_smoothing_on_sphere_example_field.nc", 'r') 
+nc_file_id = Dataset("PY_smoothing_on_sphere_example_field1.nc", 'r') 
 lon_netcdf = nc_file_id.variables["lon"][:].data
 lat_netcdf = nc_file_id.variables["lat"][:].data
 f_netcdf = nc_file_id.variables["precipitation"][:].data
