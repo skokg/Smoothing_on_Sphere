@@ -50,7 +50,7 @@ extern "C"  void * construct_KdTree_ctypes(const double * const lat, const doubl
 	// create kdtree
 	auto begin2 = std::chrono::high_resolution_clock::now();
 	kdtree::KdTree *kdtree = new kdtree::KdTree;
-	kdtree->buildKdTree_and_do_not_change_the_kdtree_points_vector(kdtree_points);
+	kdtree->buildKdTree(kdtree_points);
 	cout << "----- kdtree construction " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin2).count() * 1e-9 << " s" <<  endl;
 
 	return((void*)kdtree);

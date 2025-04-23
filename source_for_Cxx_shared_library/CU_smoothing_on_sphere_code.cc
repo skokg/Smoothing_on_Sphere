@@ -12,7 +12,7 @@ double euclidian_distance_to_great_circle_distance(const double euclidian_distan
 	return(2*Earth_radius*asin(euclidian_distance/(2*Earth_radius)));
 	}
 
-void generate_fxareasize_and_areasize_Bounding_Box_data(const std::shared_ptr<const kdtree::KdTreeNode>& node, const double * const f, const double * const area_size,  vector <double> &fxareasize_BB_data, vector <double> &area_size_BB_data)
+void generate_fxareasize_and_areasize_Bounding_Box_data(const kdtree::KdTreeNode * const node, const double * const f, const double * const area_size,  vector <double> &fxareasize_BB_data, vector <double> &area_size_BB_data)
 	{
 	size_t index = node->val.index;
 	double fxareasize_BB = f[index]*area_size[index];
@@ -35,7 +35,7 @@ void generate_fxareasize_and_areasize_Bounding_Box_data(const std::shared_ptr<co
 	}
 
 
-void generate_fxareasize_and_areasize_Bounding_Box_data_multiple_fields_simultaneously(const std::shared_ptr<const kdtree::KdTreeNode>& node, const double * const * const f, const double * const * const area_size,  const size_t number_of_fields, vector <vector <double>> &fxareasize_BB_data, vector <vector <double>> &area_size_BB_data  )
+void generate_fxareasize_and_areasize_Bounding_Box_data_multiple_fields_simultaneously(const kdtree::KdTreeNode * const node, const double * const * const f, const double * const * const area_size,  const size_t number_of_fields, vector <vector <double>> &fxareasize_BB_data, vector <vector <double>> &area_size_BB_data  )
 	{
 	size_t index = node->val.index;
 	vector <double> fxareasize_BB (number_of_fields,0);
@@ -73,7 +73,7 @@ void generate_fxareasize_and_areasize_Bounding_Box_data_multiple_fields_simultan
 
 
 
-void get_fxareasize_and_areasize_sums_of_points_in_radius( const std::shared_ptr<const kdtree::KdTreeNode>& node, const kdtree::KdTree &kdtree, const kdtree::Point_str& point, const float distance, const float distance_sqaured, const vector <double> &fxareasize, const double * const areasize, const vector <double> &fxareasize_BB_data, const vector <double> &area_size_BB_data, double &fxareasize_sum, double &areasize_sum)
+void get_fxareasize_and_areasize_sums_of_points_in_radius( const kdtree::KdTreeNode * const node, const kdtree::KdTree &kdtree, const kdtree::Point_str& point, const float distance, const float distance_sqaured, const vector <double> &fxareasize, const double * const areasize, const vector <double> &fxareasize_BB_data, const vector <double> &area_size_BB_data, double &fxareasize_sum, double &areasize_sum)
 	{
 
 	if(node == nullptr) return;
@@ -105,7 +105,7 @@ void get_fxareasize_and_areasize_sums_of_points_in_radius( const std::shared_ptr
 		}
 	}
 
-void get_fxareasize_and_areasize_sums_of_points_in_radius_multiple_fields_simultaneously( const std::shared_ptr<const kdtree::KdTreeNode>& node, const kdtree::KdTree &kdtree, const kdtree::Point_str& point, const float distance, const float distance_sqaured, const vector <vector <double>> &fxareasize, const double * const * const areasize, const vector <vector <double>> &fxareasize_BB_data, const vector <vector <double>> &area_size_BB_data, vector <double> &fxareasize_sum, vector <double> &areasize_sum, const size_t number_of_fields)
+void get_fxareasize_and_areasize_sums_of_points_in_radius_multiple_fields_simultaneously( const kdtree::KdTreeNode * const node, const kdtree::KdTree &kdtree, const kdtree::Point_str& point, const float distance, const float distance_sqaured, const vector <vector <double>> &fxareasize, const double * const * const areasize, const vector <vector <double>> &fxareasize_BB_data, const vector <vector <double>> &area_size_BB_data, vector <double> &fxareasize_sum, vector <double> &areasize_sum, const size_t number_of_fields)
 	{
 
 	if(node == nullptr) return;
