@@ -2,7 +2,7 @@
 
 #### Description:
 
-The package can be used for smoothing fields defined on a sphere. It includes two approaches, one based on k-d trees and the second on overlap detection. While each approach has its strengths and weaknesses, both are potentially fast enough to make the smoothing of high-resolution meteorological global fields feasible. A detailed description of the methodology is available in the Skok (2024) preprint paper listed in the References section. 
+The package can be used for smoothing fields defined on a sphere. It includes two approaches, one based on k-d trees and the second on overlap detection. While each approach has its strengths and weaknesses, both are potentially fast enough to make the smoothing of high-resolution meteorological global fields feasible. A detailed description of the methodology is available in the paper listed in the References section. 
 
 The underlying code is written in C++, and a Python ctypes-based wrapper is provided for easy use in the Python environment. A precompiled shared library file is available for easy use with Python on Linux systems (the C++ source code is available in the `source_for_Cxx_shared_library` folder - it can be used to compile the shared library for other types of systems). 
 
@@ -18,4 +18,4 @@ Email: Gregor.Skok@fmf.uni-lj.si
 
 #### References:
 
-Skok, G. (2024) Smoothing and spatial verification of global fields. Preprint. ArXiv, https://doi.org/10.48550/arXiv.2412.00936
+Skok, G. and Kosovelj, K., 2025: Smoothing and spatial verification of global fields, Geosci. Model Dev., 18, 7417–7433, https://doi.org/10.5194/gmd-18-7417-2025.
