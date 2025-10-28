@@ -130,3 +130,49 @@ extern "C"  void smooth_field_using_overlap_detection_ctypes(const double * cons
 	}
 
 
+
+extern "C"  void generate_smoothing_data_for_the_kdtree_based_approach_and_write_it_to_the_disk_ctypes(const double * const lat, const double * const lon, const size_t number_of_points, const double smoothing_kernel_radius_in_metres, const char * const output_folder_char)
+	{
+	string output_folder = output_folder_char;
+
+	generate_smoothing_data_for_the_kdtree_based_approach_and_write_it_to_the_disk(lat, lon, number_of_points, smoothing_kernel_radius_in_metres, output_folder);
+
+	}
+
+
+extern "C"  void * Read_smoothing_data_for_the_kdtree_based_approach_from_binary_file_ctypes(const char * const output_folder_char, const double smoothing_kernel_radius_in_metres)
+	{
+	string output_folder = output_folder_char;
+
+	string fname = output_folder + "out_kdtree_smoothing_information_r_"+output_leading_zero_string(round(smoothing_kernel_radius_in_metres),8)+"_m.bin";
+
+	char *data_pointer = nullptr;
+	Read_smoothing_data_for_the_kdtree_based_approach_from_binary_file(fname, data_pointer);
+
+	return((void*) data_pointer);
+	}
+
+
+extern "C"  void free_smoothing_data_memory_for_the_kdtree_based_approach_ctypes(void * data_pointer_void)
+	{
+	smoothing_data_for_the_kdtree_based_approach * smoothing_data = (smoothing_data_for_the_kdtree_based_approach *) data_pointer_void;
+	smoothing_data->free_memory();
+	delete smoothing_data;
+	}
+
+extern "C"  void smooth_field_using_smoothing_data_for_the_kdtree_approach_ctypes(const double * const area_size, const double * const f, const size_t number_of_points, const char * const data_pointer_void, double * const f_smoothed)
+	{
+	//cout << number_of_points << endl;
+	smooth_field_using_smoothing_data_for_the_kdtree_approach(area_size, f, number_of_points, data_pointer_void,  f_smoothed);
+	}
+
+extern "C"  void free_smoothing_data_memory_kdtree_ctypes(void * data_pointer_void)
+	{
+	char* data_pointer = (char *)data_pointer_void;
+	free_smoothing_data_memory_kdtree(data_pointer);
+	data_pointer_void = nullptr;
+	}
+
+
+
+

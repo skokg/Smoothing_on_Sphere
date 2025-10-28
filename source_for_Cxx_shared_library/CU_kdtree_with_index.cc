@@ -912,7 +912,7 @@ namespace kdtree
 
 			uint64_t size_of_one_KdTreeNode = sizeof(PointType)*dimension * 3 + sizeof(size_t) + sizeof(uint8_t) + sizeof(uint8_t);
 
-			cout << size_of_one_KdTreeNode << endl;
+			//cout << size_of_one_KdTreeNode << endl;
 
 			size = sizeof(int32_t) + (uint64_t)count_number_of_nonnull_nodes()*size_of_one_KdTreeNode;
 
@@ -964,7 +964,7 @@ namespace kdtree
 			}
 
 
-		void reconstruct_KdTree_data_from_a_binary_data_stream(const char * const &data_stream_pointer, const uint64_t size)
+		void reconstruct_KdTree_data_from_a_binary_data_stream(const char * const data_stream_pointer, const uint64_t size)
 			{
 			ERRORIF(data_stream_pointer == nullptr);
 			ERRORIF(root != nullptr);
@@ -984,7 +984,7 @@ namespace kdtree
 			add_Bounding_Box_data_to_the_tree_helper(root, coords_min, coords_max);*/
 			}
 
-		void reconstruct_KdTree_data_from_a_binary_data_stream_helper(KdTreeNode * & node,  const char * const &data_stream_pointer, uint64_t &stream_position)
+		void reconstruct_KdTree_data_from_a_binary_data_stream_helper(KdTreeNode * & node,  const char * const data_stream_pointer, uint64_t &stream_position)
 			{
 			node = new KdTreeNode();
 

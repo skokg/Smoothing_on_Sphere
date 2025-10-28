@@ -66,6 +66,7 @@ f_smoothed = smooth_multiple_fields_simultaneously_using_KdTree(smoothing_kernel
 
 # free k-d tree memory
 free_KdTree_memory(kdtree_pointer)
+kdtree_pointer = None
 
 # ------------------------------------------------------------------------------------------------------------------------
 # Visualization 

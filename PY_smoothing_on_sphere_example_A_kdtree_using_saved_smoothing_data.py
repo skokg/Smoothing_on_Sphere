@@ -11,14 +11,15 @@ from PY_smoothing_on_sphere_library import *
 from netCDF4 import Dataset
 
 # ------------------------------------------------------------------------------------------------------------------------
-# Read the sample precipiation field that is defined in two-dimenstions on a regular 0.25deg lat/long grid  -----------------------------------------------------------------------------------------------------------------------
+# Read the sample precipiation field that is defined in two-dimenstions on a regular 0.25deg lat/long grid 
+# -----------------------------------------------------------------------------------------------------------------------
 
 nc_file_id = Dataset("PY_smoothing_on_sphere_example_field1.nc", 'r') 
 lon_netcdf = nc_file_id.variables["lon"][:].data
 lat_netcdf = nc_file_id.variables["lat"][:].data
 f_netcdf = nc_file_id.variables["precipitation"][:].data
 nc_file_id.close()
-
+ 
 # ------------------------------------------------------------------------------------------------------------------------
 # convert data to lists of lats, lons, and field values for all grid points 
 # ------------------------------------------------------------------------------------------------------------------------
@@ -36,46 +37,33 @@ area_size =  np.deg2rad(dlat)*Earth_radius*np.deg2rad(dlat)*Earth_radius*np.cos(
 area_size [area_size < 0] = 0  # fix small negative values that occur at the poles due to the float rounding error
 
 # ------------------------------------------------------------------------------------------------------------------------
-# Ganerate some missing data in the rectangular region 10S-10N, 0E-20E
+# Generate the kdtree-based smoothing data for smoothing kernel radiuses of 200 km and write it to the disk
 # ------------------------------------------------------------------------------------------------------------------------
 
-lat_min = -10
-lat_max = 10
-lon_min = 0
-lon_max = 20
-f[np.logical_and.reduce((lat > lat_min, lat < lat_max, lon > lon_min, lon < lon_max))] = np.nan
-
-# ------------------------------------------------------------------------------------------------------------------------
-# Preparing the the f and area_size arrays 
-# ------------------------------------------------------------------------------------------------------------------------
-
-# in order for the missing data to be handled properly the area size of the coresponding points needs to be set to 0
-area_size[np.isnan(f)] = 0
-
-# the library does not allow the f array to be a masked array or to contain non-numeric values (e.g., not a number - nan), 
-# thus we need to set the missing data points values to some arbitrary numeric value (the value itself is not important and will 
-# not affect the calculation of the smoothed values, as long as the value is numeric). 
-# Here we set the value of the missing data point values to 0.
-f_numeric_only = f.copy()
-f_numeric_only[np.isnan(f)] = 0
-
-# ------------------------------------------------------------------------------------------------------------------------
-# Smooth the field using a k-d tree 
-# ------------------------------------------------------------------------------------------------------------------------
-
-# construct a k-d tree 
-kdtree_pointer = construct_KdTree(lat, lon)
-
-# smooth the field using a k-d tree and smoothing kernel radius of R = 200 km
 smoothing_kernel_radius_in_metres = 200*1000
-f_smoothed = smooth_field_using_KdTree(smoothing_kernel_radius_in_metres, kdtree_pointer, lat, lon, area_size, f_numeric_only)
 
-# free k-d tree memory
-free_KdTree_memory(kdtree_pointer)
-kdtree_pointer = None
+# set the output folder for the smoothing data files
+kdtree_smoothing_data_folder = bytes("smoothing_data_kdtree/", encoding='utf8')
 
-# the library will allways return 0 for the missing data points so we set the values of these points back to nan
-f_smoothed[np.isnan(f)] = np.nan
+# create the folder if it does not exist
+os.makedirs(kdtree_smoothing_data_folder, exist_ok = True)
+
+# Generate the smoothing data and write it to the disk
+generate_smoothing_data_for_the_kdtree_based_approach_and_write_it_to_the_disk(lat, lon, smoothing_kernel_radius_in_metres, kdtree_smoothing_data_folder)
+
+# ------------------------------------------------------------------------------------------------------------------------
+# Use the kdtree-based smoothing data to calculate the smoothed field for the 200 km smoothing kernel radius
+# ------------------------------------------------------------------------------------------------------------------------
+
+# read the kdtree-based smoothing data from the disk into the memory
+kdtree_smoothing_data_pointer = read_smoothing_data_for_the_kdtree_based_approach_from_binary_file_ctypes(kdtree_smoothing_data_folder, smoothing_kernel_radius_in_metres)
+
+# calculate the smoothed field from the kdtree-based smoothing data
+f_smoothed = smooth_field_using_smoothing_data_for_the_kdtree_approach(area_size, f, kdtree_smoothing_data_pointer)
+
+# free the kdtree-based smoothing data memory
+free_smoothing_data_memory_kdtree(kdtree_smoothing_data_pointer)
+smoothing_data_pointer = None
 
 
 # ------------------------------------------------------------------------------------------------------------------------
@@ -100,7 +88,6 @@ cmap_b = matplotlib.colors.LinearSegmentedColormap.from_list('rb_cmap',["white",
 img = matplotlib.pyplot.imshow(f_netcdf, transform=cartopy.crs.PlateCarree(), interpolation='nearest', origin='lower', extent=(0, 360, -90, 90), cmap=cmap_b, norm = matplotlib.colors.LogNorm(vmin=0.01, vmax=100))
 cb = fig.colorbar(img, extend='both', shrink=0.5)
 cb.set_label('Precipitation (mm/6h)')
-ax.add_patch(matplotlib.patches.Rectangle( (lon_min, lat_min), (lon_max-lon_min), (lat_max - lat_min),color = "silver", transform=cartopy.crs.PlateCarree()))
 ax.coastlines(resolution='110m', color='grey', linestyle='-', alpha=1)
 matplotlib.pyplot.show()
 matplotlib.pyplot.close()
@@ -113,7 +100,6 @@ cmap_b = matplotlib.colors.LinearSegmentedColormap.from_list('rb_cmap',["white",
 img = matplotlib.pyplot.imshow(f_smoothed_2D, transform=cartopy.crs.PlateCarree(), interpolation='nearest', origin='lower', extent=(0, 360, -90, 90), cmap=cmap_b, norm = matplotlib.colors.LogNorm(vmin=0.01, vmax=100))
 cb = fig.colorbar(img, extend='both', shrink=0.5)
 cb.set_label('Precipitation (mm/6h)')
-ax.add_patch(matplotlib.patches.Rectangle( (lon_min, lat_min), (lon_max-lon_min), (lat_max - lat_min),color = "silver", transform=cartopy.crs.PlateCarree()))
 ax.coastlines(resolution='110m', color='grey', linestyle='-', alpha=1)
 matplotlib.pyplot.show()
 matplotlib.pyplot.close()

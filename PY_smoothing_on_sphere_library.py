@@ -119,6 +119,9 @@ libc.smooth_field_using_KdTree_ctypes.restype = None
 
 def smooth_field_using_KdTree(smoothing_kernel_radius_in_metres, kdtree_pointer, lat, lon, area_size, f):
 	
+	if kdtree_pointer == None:
+		print("ERROR: the smoothing_data_pointer value is None, which is not allowed. Returning \"None\" as result!")
+		return(None)
 	
 	if check_array(lat, "lat") != True:
 		return(None)
@@ -168,6 +171,10 @@ libc.smooth_field_using_KdTree_ctypes.restype = None
 def smooth_multiple_fields_simultaneously_using_KdTree(smoothing_kernel_radius_in_metres, kdtree_pointer, lat, lon, area_size, f):
 	
 	
+	if kdtree_pointer == None:
+		print("ERROR: the smoothing_data_pointer value is None, which is not allowed. Returning \"None\" as result!")
+		return(None)
+	
 	if check_array(lat, "lat") != True:
 		return(None)
 	
@@ -214,6 +221,90 @@ def smooth_multiple_fields_simultaneously_using_KdTree(smoothing_kernel_radius_i
 	libc.smooth_multiple_fields_simultaneously_using_KdTree_ctypes(smoothing_kernel_radius_in_metres, kdtree_pointer, lat, lon, area_size, f, len(lat), f.shape[0], f_smoothed)
 	
 	return(f_smoothed)
+
+# -----------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------
+
+libc.generate_smoothing_data_for_the_kdtree_based_approach_and_write_it_to_the_disk_ctypes.argtypes = [ND_POINTER_1D, ND_POINTER_1D, ctypes.c_size_t, ctypes.c_double, ctypes.c_char_p]
+libc.generate_smoothing_data_for_the_kdtree_based_approach_and_write_it_to_the_disk_ctypes.restype = None
+
+def generate_smoothing_data_for_the_kdtree_based_approach_and_write_it_to_the_disk(lat, lon, smoothing_kernel_radius_in_metres, smoothing_data_folder):
+	
+	if check_array(lat, "lat") != True:
+		return(None)
+	
+	if check_array(lon, "lon") != True:
+		return(None)
+	
+	# compare lat lon dimensions
+	if lat.shape != lon.shape:
+		print("ERROR: the lat, lon arrays do not have the same shape. Returning \"None\" as result!")
+		return(None)
+	
+	# convert array to np.float64 and contiguousarray  - this format is required for the interation with the C++ code
+	lat = np.ascontiguousarray(lat, dtype = np.float64)
+	lon = np.ascontiguousarray(lon, dtype = np.float64)
+	
+	if np.ndim(smoothing_kernel_radius_in_metres) != 0:
+		print("ERROR: the smoothing_kernel_radius_in_metres needs to bo a single value not an array or list. Returning \"None\" as result!")
+		return(None)
+	
+	smoothing_kernel_radius_in_metres_float64 = np.float64(smoothing_kernel_radius_in_metres) 
+	
+	# calculate the smoothing data and write it to disk
+	libc.generate_smoothing_data_for_the_kdtree_based_approach_and_write_it_to_the_disk_ctypes(lat,lon,len(lat),smoothing_kernel_radius_in_metres_float64, smoothing_data_folder)	
+
+
+
+# -----------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------
+
+libc.Read_smoothing_data_for_the_kdtree_based_approach_from_binary_file_ctypes.argtypes = [ctypes.c_char_p, ctypes.c_double]
+libc.Read_smoothing_data_for_the_kdtree_based_approach_from_binary_file_ctypes.restype = ctypes.c_void_p
+
+def read_smoothing_data_for_the_kdtree_based_approach_from_binary_file_ctypes(smoothing_data_folder, smoothing_kernel_radius_in_metres):
+	
+	if np.ndim(smoothing_kernel_radius_in_metres) != 0:
+		print("ERROR: the smoothing_kernel_radius_in_metres needs to bo a single value in the read_smoothing_data_from_binary_file function. Returning \"None\" as result!")
+		return(None)
+	
+	smoothing_data_pointer = libc.Read_smoothing_data_for_the_kdtree_based_approach_from_binary_file_ctypes(smoothing_data_folder, smoothing_kernel_radius_in_metres)
+	return(smoothing_data_pointer)
+
+# -----------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------
+
+libc.smooth_field_using_smoothing_data_for_the_kdtree_approach_ctypes.argtypes = [ND_POINTER_1D, ND_POINTER_1D, ctypes.c_size_t, ctypes.c_void_p, ND_POINTER_1D]
+libc.smooth_field_using_smoothing_data_for_the_kdtree_approach_ctypes.restype = None
+
+def smooth_field_using_smoothing_data_for_the_kdtree_approach(area_size, f, smoothing_data_pointer):
+	
+	if smoothing_data_pointer == None:
+		print("ERROR: the smoothing_data_pointer value is None, which is not allowed. Returning \"None\" as result!")
+		return(None)
+	
+	# convert array to np.float64 and contiguousarray  - this format is required for the interation with the C++ code
+	area_size = np.ascontiguousarray(area_size, dtype = np.float64)
+	f = np.ascontiguousarray(f, dtype = np.float64)
+	
+	# reserve memory for the outputed smoothed field
+	f_smoothed = np.ascontiguousarray(np.zeros(len(f),dtype=np.float64))
+	
+	# calculate the smoothed values
+	libc.smooth_field_using_smoothing_data_for_the_kdtree_approach_ctypes(area_size, f, len(f), smoothing_data_pointer, f_smoothed)
+	
+	return(f_smoothed)
+
+
+# -----------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------
+
+libc.free_smoothing_data_memory_kdtree_ctypes.argtypes = [ctypes.c_void_p]
+libc.free_smoothing_data_memory_kdtree_ctypes.restype = None
+
+def free_smoothing_data_memory_kdtree(smoothing_data_pointer):
+	libc.free_smoothing_data_memory_kdtree_ctypes(smoothing_data_pointer)
+	smoothing_data_pointer = None
 
 # -----------------------------------------------------------------------------------------------------
 # -----------------------------------------------------------------------------------------------------
@@ -290,6 +381,10 @@ libc.smooth_field_using_overlap_detection_ctypes.argtypes = [ND_POINTER_1D, ND_P
 libc.smooth_field_using_overlap_detection_ctypes.restype = None
 
 def smooth_field_using_overlap_detection(area_size, f, smoothing_data_pointer):
+	
+	if smoothing_data_pointer == None:
+		print("ERROR: the smoothing_data_pointer value is None, which is not allowed. Returning \"None\" as result!")
+		return(None)
 	
 	if check_array(area_size, "area_size") != True:
 		return(None)

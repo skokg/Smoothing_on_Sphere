@@ -237,7 +237,7 @@ void smooth_field_using_kd_tree(const double r_kernel_in_metres, const kdtree::K
 		//f_smoothed.set(ix,iy,sum/(double)node_list.size());
 		//cout << il << " " << f_smoothed[il]<< endl;
 		}
-	cout << "----- smoothing " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin3).count() * 1e-9 << " s" << endl;
+	cout << "----- Smoothing " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin3).count() * 1e-9 << " s" << endl;
 
 	//return(f_smoothed);
 	}
@@ -305,7 +305,7 @@ void smooth_field_using_kd_tree_multiple_fields_simultaneously(const double r_ke
 		//f_smoothed.set(ix,iy,sum/(double)node_list.size());
 		//cout << il << " " << f_smoothed[il]<< endl;
 		}
-	cout << "----- smoothing " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin3).count() * 1e-9 << " s" << endl;
+	cout << "----- Smoothing " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin3).count() * 1e-9 << " s" << endl;
 
 	//return(f_smoothed);
 
@@ -735,9 +735,280 @@ void smooth_field_using_overlap_detection(const double * const area_size, const 
 			f_smoothed[il]=0;
 		}
 
-	cout << "----- smoothing " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin4).count() * 1e-9 << " s" << endl;
+	cout << "----- Smoothing " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin4).count() * 1e-9 << " s" << endl;
 	}
 
+
+void identify_branches_and_single_nodes_inside_the_radius( const kdtree::KdTreeNode * const node, const kdtree::KdTree &kdtree, const kdtree::Point_str& point, const float distance, const float distance_sqaured, vector <uint32_t> &branches_fully_inside_the_radius, vector <uint32_t> &single_nodes_inside_the_radius)
+	{
+
+	if(node == nullptr) return;
+
+	if (kdtree.test_if_the_hypersphere_and_hyperrectangle_intersect_using_sqr_radius( point.coords, distance_sqaured, node->coords_min, node->coords_max ))
+		{
+		float dist_sqr = kdtree.calDist_sqr(point, node->val);
+		bool inside_sphere = false;
+		if(dist_sqr < distance_sqaured)
+			inside_sphere = true;
+
+		if (inside_sphere && kdtree.test_if_the_hyperrectangle_is_fully_inside_the_sphere_using_sqr_radius( point.coords, distance_sqaured, node->coords_min, node->coords_max))
+			{
+			branches_fully_inside_the_radius.push_back((uint32_t)node->val.index);
+			}
+
+		else
+			{
+			if (inside_sphere)
+				{
+				single_nodes_inside_the_radius.push_back((uint32_t)node->val.index);
+				}
+
+			identify_branches_and_single_nodes_inside_the_radius(node->rightNode, kdtree, point, distance, distance_sqaured, branches_fully_inside_the_radius, single_nodes_inside_the_radius );
+			identify_branches_and_single_nodes_inside_the_radius(node->leftNode, kdtree, point, distance, distance_sqaured, branches_fully_inside_the_radius, single_nodes_inside_the_radius );
+			}
+		}
+	}
+
+void generate_smoothing_data_for_the_kdtree_based_approach_and_write_it_to_the_disk(const double * const lat, const double * const lon, const size_t number_of_points, const double smoothing_kernel_radius_in_metres, const string output_folder)
+	{
+	auto begin = std::chrono::high_resolution_clock::now();
+
+	// construct kd-tree
+	vector <kdtree::Point_str> kdtree_points = generate_vector_of_kdtree_points_from_lat_lon_points_provided_as_arrays(lat, lon, number_of_points);
+	kdtree::KdTree kdtree;
+	kdtree.buildKdTree_and_do_not_change_the_kdtree_points_vector(kdtree_points);
+
+	cout << "----- Construction of kd-tree " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin).count() * 1e-9 << " s" << endl;
+
+	// calculate the smoothing data
+	vector <vector <uint32_t>> branches_fully_inside_the_radius (number_of_points, vector <uint32_t> (0,0));
+	vector <vector <uint32_t>> single_nodes_inside_the_radius (number_of_points, vector <uint32_t> (0,0));
+
+	float tunnel_distance_radius_in_metres = (float) great_circle_distance_to_euclidian_distance(smoothing_kernel_radius_in_metres);
+	float squared_tunnel_distance_radius_in_metres = tunnel_distance_radius_in_metres*tunnel_distance_radius_in_metres;
+
+	begin = std::chrono::high_resolution_clock::now();
+
+	#pragma omp parallel for num_threads(NUMBER_OF_THREADS)
+	for (uint32_t il = 0; il < number_of_points; il++)
+		{
+		identify_branches_and_single_nodes_inside_the_radius( kdtree.root, kdtree, kdtree_points[il], tunnel_distance_radius_in_metres, squared_tunnel_distance_radius_in_metres, branches_fully_inside_the_radius[il], single_nodes_inside_the_radius[il]);
+		}
+	cout << "----- Generating smoothing data " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin).count() * 1e-9 << " s" << endl;
+
+	//for (uint32_t il = 0; il < number_of_points; il++)
+	//	cout << il << " " << branches_fully_inside_the_radius[il].size() << " " << single_nodes_inside_the_radius[il].size() << endl;
+
+	begin = std::chrono::high_resolution_clock::now();
+
+	string fname = output_folder + "out_kdtree_smoothing_information_r_"+output_leading_zero_string(round(smoothing_kernel_radius_in_metres),8)+"_m.bin";
+
+	// kd-tree data
+	char *data_stream_pointer = nullptr;
+	uint64_t size = 0;
+	kdtree.write_KdTree_data_into_a_binary_data_stream(data_stream_pointer, size);
+
+	//cout << "bb " << size << endl;
+
+	FILE * pFile;
+	pFile = fopen ( fname.c_str() , "wb" );
+		if (pFile==NULL)
+	error(AT,FU, "Problems opening file: " + fname);
+
+	// write kd-tree data size
+	size_t result = fwrite(&size,sizeof(uint64_t),1,pFile);
+	if (result != 1)
+		error(AT,FU, "Problems writing kdtree to file: " + fname);
+
+	// write kd-tree data
+	result = fwrite(data_stream_pointer,sizeof(char),size,pFile);
+	if (result != size)
+		error(AT,FU, "Problems writing kdtree to file: " + fname);
+
+	delete [] data_stream_pointer;
+
+	// write number of points
+	uint32_t count = number_of_points;
+	result = fwrite(&count,sizeof(uint32_t),1,pFile);
+	if (result != 1)
+		error(AT,FU, "Problems writing to file: " + fname);
+
+	// write smoothing data
+	for (uint32_t il = 0; il < number_of_points; il++)
+		{
+		uint32_t count1 = branches_fully_inside_the_radius[il].size();
+		result = fwrite(&count1,sizeof(uint32_t),1,pFile);
+		if (result != 1)
+			error(AT,FU, "Problems writing to file: " + fname);
+
+		uint32_t count2 = single_nodes_inside_the_radius[il].size();
+		result = fwrite(&count2,sizeof(uint32_t),1,pFile);
+		if (result != 1)
+			error(AT,FU, "Problems writing to file: " + fname);
+
+		result = fwrite(&branches_fully_inside_the_radius[il][0],sizeof(uint32_t),count1,pFile);
+		if (result != count1)
+			error(AT,FU, "Problems writing to file: " + fname);
+
+		result = fwrite(&single_nodes_inside_the_radius[il][0],sizeof(uint32_t),count2,pFile);
+		if (result != count2)
+			error(AT,FU, "Problems writing to file: " + fname);
+		}
+
+	fclose (pFile);
+
+	cout << "----- Writing smoothing data to disk " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin).count() * 1e-9 << " s" << endl;
+
+	}
+
+
+struct smoothing_data_for_the_kdtree_based_approach
+	{
+	kdtree::KdTree kdtree;
+	vector <uint32_t *> smoothing_data_for_point;
+
+	void free_memory()
+		{
+		kdtree.free_memory();
+		for (uint32_t il=0; il<smoothing_data_for_point.size(); il++)
+			{
+			if (smoothing_data_for_point[il] != nullptr)
+				delete[] smoothing_data_for_point[il];
+			}
+		}
+
+	};
+
+
+void free_smoothing_data_memory_kdtree(char *&data_pointer)
+	{
+	smoothing_data_for_the_kdtree_based_approach * const smoothing_data = (smoothing_data_for_the_kdtree_based_approach * const) data_pointer;
+	smoothing_data->free_memory();
+	data_pointer=nullptr;
+	}
+
+
+
+void Read_smoothing_data_for_the_kdtree_based_approach_from_binary_file(const string &fname, char *&data_pointer)
+	{
+	cout << "Reading file: " << fname << endl;
+	ERRORIF(data_pointer != nullptr);
+
+	FILE * pFile;
+	pFile = fopen ( fname.c_str() , "rb" );
+	if (pFile==NULL)
+		error(AT,FU, "Problems opening file: " + fname);
+
+
+	// read kd-tree data size
+	uint64_t kd_tree_data_size;
+	size_t result = fread (&kd_tree_data_size,sizeof(uint64_t),1,pFile);
+	if (result != 1)
+		error(AT,FU, "Problems reading smoothig data from file: " + fname);
+
+	//cout << kd_tree_data_size << endl;
+
+	char * kd_tree_data = new char[kd_tree_data_size];
+
+	// read kd-tree data
+	result = fread (kd_tree_data,sizeof(char),kd_tree_data_size,pFile);
+	if (result != kd_tree_data_size)
+		error(AT,FU, "Problems reading smoothig data from file: " + fname);
+
+	smoothing_data_for_the_kdtree_based_approach * smoothing_data = new smoothing_data_for_the_kdtree_based_approach();
+	// reconstruct kd-tree
+	smoothing_data->kdtree.reconstruct_KdTree_data_from_a_binary_data_stream(kd_tree_data, kd_tree_data_size);
+	delete[] kd_tree_data;
+
+	//cout << smoothing_data->kdtree.count_number_of_nonnull_nodes() << endl;
+
+	// read number of points
+	uint32_t number_of_points;
+	result = fread (&number_of_points,sizeof(uint32_t),1,pFile);
+	if (result != 1)
+		error(AT,FU, "Problems reading smoothig data from file: " + fname);
+
+
+	// read smoothing data
+	for (uint32_t il = 0; il < number_of_points; il++)
+		{
+		uint32_t count1;
+		result = fread (&count1,sizeof(uint32_t),1,pFile);
+		if (result != 1)
+			error(AT,FU, "Problems reading smoothig data from file: " + fname);
+
+		uint32_t count2;
+		result = fread (&count2,sizeof(uint32_t),1,pFile);
+		if (result != 1)
+			error(AT,FU, "Problems reading smoothig data from file: " + fname);
+
+		uint32_t * temp = new uint32_t[2+count1+count2];
+		temp[0] = count1;
+		temp[1] = count2;
+
+		result = fread (&temp[2],sizeof(uint32_t),count1+count2,pFile);
+		if (result != count1+count2)
+			error(AT,FU, "Problems reading smoothig data from file: " + fname);
+
+		smoothing_data->smoothing_data_for_point.push_back(temp);
+		}
+
+	fclose (pFile);
+
+	data_pointer = (char *) smoothing_data;
+	}
+
+void smooth_field_using_smoothing_data_for_the_kdtree_approach(const double * const area_size, const double * const f, const size_t number_of_points, const char * const data_pointer,  double * const f_smoothed)
+	{
+	auto begin = std::chrono::high_resolution_clock::now();
+
+	const smoothing_data_for_the_kdtree_based_approach * const smoothing_data = (const smoothing_data_for_the_kdtree_based_approach * const) data_pointer;
+
+	ERRORIF(number_of_points != smoothing_data->smoothing_data_for_point.size());
+
+	vector <double> fxareasize (number_of_points,0);
+	for (unsigned long il=0; il < number_of_points; il++)
+		fxareasize[il] = f[il]*area_size[il];
+	//cout << sum_vector(fxareasize) << endl;
+	//cout << sum_vector(area_size) << endl;
+
+	vector <double> fxareasize_BB_data (number_of_points,0);
+	vector <double> area_size_BB_data (number_of_points,0);
+
+	generate_fxareasize_and_areasize_Bounding_Box_data(smoothing_data->kdtree.root, f, area_size,  fxareasize_BB_data, area_size_BB_data);
+
+	#pragma omp parallel for num_threads(NUMBER_OF_THREADS)
+	for (uint32_t il=0; il < number_of_points; il++)
+		{
+		double fxareasize_temp=0;
+		double area_size_temp=0;
+
+		const uint32_t * const smoothing_data_for_single_point =  smoothing_data->smoothing_data_for_point[il];
+		uint32_t start_index = 2;
+		uint32_t end_index = start_index + smoothing_data_for_single_point[0];
+		for (uint32_t ip=start_index; ip < end_index; ip++)
+			{
+			fxareasize_temp+=fxareasize_BB_data[smoothing_data_for_single_point[ip]];
+			area_size_temp+=area_size_BB_data[smoothing_data_for_single_point[ip]];
+			}
+		start_index = end_index;
+		end_index = start_index + smoothing_data_for_single_point[1];
+		for (uint32_t ip=start_index; ip < end_index; ip++)
+			{
+			fxareasize_temp+=fxareasize[smoothing_data_for_single_point[ip]];
+			area_size_temp+=area_size[smoothing_data_for_single_point[ip]];
+			}
+
+		if (area_size[il] > 0)
+			f_smoothed[il] = fxareasize_temp / area_size_temp;
+		else
+			f_smoothed[il] = 0;
+
+		}
+
+	cout << "----- Smoothing " << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - begin).count() * 1e-9 << " s" << endl;
+
+	}
 
 
 

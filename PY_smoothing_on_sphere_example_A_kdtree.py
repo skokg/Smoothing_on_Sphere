@@ -11,7 +11,8 @@ from PY_smoothing_on_sphere_library import *
 from netCDF4 import Dataset
 
 # ------------------------------------------------------------------------------------------------------------------------
-# Read the sample precipiation field that is defined in two-dimenstions on a regular 0.25deg lat/long grid  -----------------------------------------------------------------------------------------------------------------------
+# Read the sample precipiation field that is defined in two-dimenstions on a regular 0.25deg lat/long grid 
+# -----------------------------------------------------------------------------------------------------------------------
 
 nc_file_id = Dataset("PY_smoothing_on_sphere_example_field1.nc", 'r') 
 lon_netcdf = nc_file_id.variables["lon"][:].data
@@ -48,6 +49,7 @@ f_smoothed = smooth_field_using_KdTree(smoothing_kernel_radius_in_metres, kdtree
 
 # free k-d tree memory
 free_KdTree_memory(kdtree_pointer)
+kdtree_pointer = None
 
 # ------------------------------------------------------------------------------------------------------------------------
 # Visualization 

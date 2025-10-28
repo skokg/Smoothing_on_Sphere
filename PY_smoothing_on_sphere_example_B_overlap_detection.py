@@ -61,6 +61,7 @@ f_smoothed = smooth_field_using_overlap_detection(area_size, f, smoothing_data_p
 
 # free the smoothing data memory
 free_smoothing_data_memory(smoothing_data_pointer, len(lat))
+smoothing_data_pointer = None
 
 # ------------------------------------------------------------------------------------------------------------------------
 # Visualization 
