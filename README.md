@@ -8,12 +8,14 @@ The underlying code is written in C++, and a Python ctypes-based wrapper is prov
 
 #### Usage:
 
-To see how the package can be used in practice, please refer to the examples in the files:
-1) PY_smoothing_on_sphere_example_A_kdtree.py - smoothing a single field using kdtree-based methodology without saving the smoothing data.
-2) PY_smoothing_on_sphere_example_A_kdtree_multiple_fields_simultaneously.py  - smoothing multiple fields simultaneously using kdtree-based methodology without saving the smoothing data. This is usually significantly faster than smoothing each field separately.
-3) PY_smoothing_on_sphere_example_A_kdtree_using_saved_smoothing_data.py - smoothing a single field using kdtree-based methodology by first generating the smoothing data that is later used for the smoothing. This is significantly faster than smoothing without using the smoothing data; however, it can require a substantial amount of memory and disk space for the smoothing data.
-4) PY_smoothing_on_sphere_example_B_overlap_detection.py - smoothing a single field using overlap-based methodology by first generating the smoothing data that is later used for the smoothing.
-5) PY_smoothing_on_sphere_example_C_missing_data.py - smoothing a single field with missing data using kdtree-based methodology.
+The following examples demonstrate how to use the package:
+
+- `Example_A_kdtree_direct.py` — direct KD-tree smoothing.
+- `Example_B_kdtree_using_saved_cache.py` — generating and reusing KD-tree caches for faster smoothing.
+- `Example_C_overlap_using_saved_cache.py` — generating and reusing overlap caches for faster smoothing.
+- `Example_D_with_missing_data.py` — direct KD-tree smoothing with the presence of missing data.
+
+Examples A–C demonstrate both single-field and multi-field smoothing.
 
 #### Author:
 
