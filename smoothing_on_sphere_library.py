@@ -10,9 +10,26 @@ import os
 
 import numpy as np
 
-# Build the shared library from the matching C++ sources.
-libc = ctypes.CDLL(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "smoothing_on_sphere_Cxx_shared_library.so"))
+_library_folder = os.path.dirname(os.path.abspath(__file__))
+_library_path = os.path.join(_library_folder, "smoothing_on_sphere_Cxx_shared_library.so")
+_compile_advice = (
+    "To compile on Linux, install GNU Make and a C++11-compatible compiler "
+    "with OpenMP support (g++ by default), then run `make` in the folder "
+    f"containing smoothing_on_sphere_library.py and the Makefile: {_library_folder}. "
+    "This creates smoothing_on_sphere_Cxx_shared_library.so in that folder. "
+    "To rebuild an existing library, run `make -B`."
+)
+if not os.path.isfile(_library_path):
+    raise ImportError(
+        f"Smoothing shared library not found: {_library_path}. {_compile_advice}"
+    )
+
+try:
+    libc = ctypes.CDLL(_library_path)
+except OSError as exc:
+    raise ImportError(
+        f"Cannot load smoothing shared library: {_library_path}. {_compile_advice}"
+    ) from exc
 
 ND_POINTER_1D = np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags=("C_CONTIGUOUS", "ALIGNED"))
 ND_POINTER_2D = np.ctypeslib.ndpointer(dtype=np.float64, ndim=2, flags=("C_CONTIGUOUS", "ALIGNED"))

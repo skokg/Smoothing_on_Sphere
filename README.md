@@ -8,6 +8,8 @@ The underlying code is written in C++, and a Python ctypes-based wrapper is prov
 
 #### Usage:
 
+To compile the shared library on Linux, run `make` in this folder. This requires GNU Make and a C++11-compatible compiler with OpenMP support (`g++` by default). The library is created beside `smoothing_on_sphere_library.py`. Use `make -B` to force a rebuild or `make clean` to remove the shared library.
+
 The following examples demonstrate how to use the package:
 
 - `Example_A_kdtree_direct.py` — direct KD-tree smoothing.
