@@ -6,6 +6,8 @@
 #include <cerrno>
 #include <cstdlib>
 #ifdef _WIN32
+#include <codecvt>
+#include <cwchar>
 #include <direct.h>
 #else
 #include <unistd.h>
@@ -136,13 +138,6 @@ void validate_cache_radius(const double radius)
 		throw runtime_error("Cache radius exceeds half the Earth's circumference; regenerate the cache.");
 	}
 
-string make_overlap_cache_filename(const string &folder, const double requested_radius)
-	{
-	const double radius = cap_smoothing_radius(requested_radius);
-	return folder + "overlap_cache_data_r_" +
-		output_leading_zero_string(static_cast<long>(round(radius)), 8) + "_m.bin";
-	}
-
 namespace smoothing_io
 	{
 	using File = unique_ptr<FILE, decltype(&fclose)>;
@@ -150,9 +145,12 @@ namespace smoothing_io
 	string absolute_path(const string &name)
 		{
 #ifdef _WIN32
-		unique_ptr<char, decltype(&std::free)> resolved(_fullpath(nullptr, name.c_str(), 0), &std::free);
+		// Python supplies UTF-8 paths; Windows file APIs need UTF-16, not the ANSI code page.
+		wstring_convert<codecvt_utf8_utf16<wchar_t>> converter;
+		const wstring wide_name = converter.from_bytes(name);
+		unique_ptr<wchar_t, decltype(&std::free)> resolved(_wfullpath(nullptr, wide_name.c_str(), 0), &std::free);
 		if (!resolved) throw runtime_error("Cannot resolve cache file path: " + name);
-		return string(resolved.get());
+		return converter.to_bytes(resolved.get());
 #else
 		if (!name.empty() && name[0] == '/') return name;
 		vector<char> directory(256);
@@ -169,7 +167,14 @@ namespace smoothing_io
 
 	File open(const string &name, const char *mode)
 		{
+#ifdef _WIN32
+		wstring_convert<codecvt_utf8_utf16<wchar_t>> converter;
+		const wstring wide_name = converter.from_bytes(name);
+		const wstring wide_mode = converter.from_bytes(mode);
+		File file(_wfopen(wide_name.c_str(), wide_mode.c_str()), &fclose);
+#else
 		File file(fopen(name.c_str(), mode), &fclose);
+#endif
 		if (!file) throw runtime_error("Cannot open cache data file: " + name);
 		return file;
 		}
@@ -743,6 +748,32 @@ namespace overlap_s2
 		if (position != size)
 			throw runtime_error("Trailing overlap S2-delta record bytes.");
 		}
+
+	// Only for owned records produced by encode_record or validated on loading.
+	// This measures trusted data for saving; it is not a bounded file validator.
+	size_t encoded_record_size(const uint8_t *record)
+		{
+		uint32_t header[4];
+		std::memcpy(header, record, sizeof(header));
+		size_t position = sizeof(header);
+		for (size_t channel = 0; channel < 2; ++channel)
+			{
+			uint32_t remaining = header[2 + channel];
+			while (remaining != 0)
+				{
+				// One length byte, four base-index bytes, then extra deltas.
+				const unsigned extra = record[position];
+				if (extra >= remaining)
+					throw logic_error("Invalid owned overlap record block length.");
+				const size_t block_bytes = 5 + extra;
+				if (position > numeric_limits<size_t>::max() - block_bytes)
+					throw length_error("Overlap record is too large to save.");
+				position += block_bytes;
+				remaining -= extra + 1;
+				}
+			}
+		return position;
+		}
 	}
 
 void read_overlap_cache_data_from_binary_file(const string &cache_filename,
@@ -1217,28 +1248,16 @@ namespace overlap_s2
 		}
 	}
 
-void generate_overlap_cache_data_and_write_to_disk(const double * const lat, const double * const lon, const size_t number_of_points, const vector <double> &requested_radii, const string overlap_cache_data_folder, const size_t starting_point, const int number_of_threads, const bool show_output_log = true)
-	{
+unique_ptr<OverlapCacheData> generate_overlap_cache_data_in_memory(
+    const double *lat, const double *lon, const size_t number_of_points,
+    const double requested_radius, const int number_of_threads, const bool show_output_log = true)
+    {
     smoothing_kdtree::validate_number_of_threads(number_of_threads);
-
-	smoothing_kdtree::validate_lat_lon(lat, lon, number_of_points);
-	if ((number_of_points == 0 && starting_point != 0) ||
-		(number_of_points != 0 && starting_point >= number_of_points))
-		throw invalid_argument("Starting point is outside the smoothing grid.");
-	vector<double> smoothing_kernel_radius_in_metres;
-	vector<string> cache_filenames;
-	for (double radius : requested_radii)
-		{
-		const double capped_radius = cap_smoothing_radius(radius);
-		smoothing_kernel_radius_in_metres.push_back(capped_radius);
-		cache_filenames.push_back(make_overlap_cache_filename(overlap_cache_data_folder, capped_radius));
-		}
-	vector<string> sorted_filenames = cache_filenames;
-	std::sort(sorted_filenames.begin(), sorted_filenames.end());
-	if (std::adjacent_find(sorted_filenames.begin(), sorted_filenames.end()) != sorted_filenames.end())
-		throw invalid_argument("Smoothing radii must have distinct overlap cache filenames after capping and rounding.");
-	if (smoothing_kernel_radius_in_metres.empty()) return;
-	// Create the S2 ordering before either overlap KD-tree is built.
+    smoothing_kdtree::validate_lat_lon(lat, lon, number_of_points);
+    const double radius = cap_smoothing_radius(requested_radius);
+    const size_t starting_point = 0;
+    // Create only one radius's cache, without opening any files.
+    // Create the S2 ordering before either overlap KD-tree is built.
 	vector <smoothing_kdtree::Point> kdtree_points = generate_vector_of_kdtree_points_from_lat_lon_points_provided_as_arrays(lat, lon, number_of_points, number_of_threads);
 	vector<pair<uint64_t, uint32_t>> spatial_keys(number_of_points);
 	smoothing_kdtree::parallel_for(number_of_points, 200, number_of_threads, [&](const size_t i)
@@ -1361,159 +1380,74 @@ void generate_overlap_cache_data_and_write_to_disk(const double * const lat, con
 		!overlap_cache_tree.buildKdTree_and_do_not_change_the_kdtree_points_vector(kdtree_points))
 		throw runtime_error("Cannot construct overlap-cache KD-tree.");
 
-	// Generate overlap records from the completed smoothing sequence.
+    unique_ptr<OverlapCacheData> cache(new OverlapCacheData());
+    cache->radius = radius;
+    cache->spatial_to_original = std::move(spatial_to_original);
+    cache->sequence.resize(number_of_points);
+    cache->records.resize(number_of_points);
+    // Temporary total for the construction log; no per-record lengths are kept.
+    size_t record_bytes = 0;
+    vector<uint32_t> positions(number_of_points);
+    for (size_t i = 0; i < number_of_points; ++i)
+        positions[iterative_sequence_current_smoothing_point[i]] = static_cast<uint32_t>(i);
+    const float distance = static_cast<float>(great_circle_distance_to_euclidian_distance(radius));
+    smoothing_kdtree::parallel_for(number_of_points, 200, number_of_threads, [&](size_t i) {
+        const uint32_t current = iterative_sequence_current_smoothing_point[i];
+        const uint32_t previous = iterative_sequence_previous_smoothing_point[i];
+        vector<uint32_t> added, removed;
+        if (i == 0) {
+            const auto cluster = overlap_cache_tree.findNearestNodeCluster(kdtree_points[current], distance);
+            added.reserve(cluster.size());
+            for (const auto *node : cluster) added.push_back(node->val.index);
+        } else {
+            auto differences = overlap_cache_tree.findNodeClusterDifferences(
+                kdtree_points[current], distance, kdtree_points[previous], distance);
+            added = std::move(differences.first);
+            removed = std::move(differences.second);
+        }
+        std::sort(added.begin(), added.end());
+        std::sort(removed.begin(), removed.end());
+        vector<uint8_t> record;
+        overlap_s2::encode_record(current, previous, added, removed, number_of_points, record);
+        cache->records[i].reset(new uint8_t[record.size()]);
+        std::memcpy(cache->records[i].get(), record.data(), record.size());
+        cache->sequence[i] = overlap_sequence_link{
+            cache->spatial_to_original[current], i == 0 ? 0 : positions[previous]};
+        if (show_output_log) {
+            #pragma omp atomic update
+            record_bytes += record.size();
+        }
+    });
+    if (show_output_log) {
+        size_t bytes = sizeof(OverlapCacheData)
+            + cache->spatial_to_original.capacity() * sizeof(uint32_t)
+            + cache->sequence.capacity() * sizeof(overlap_sequence_link)
+            + cache->records.capacity() * sizeof(unique_ptr<uint8_t[]>)
+            + record_bytes;
+        cout << "----- Overlap cache constructed. Cache memory: " << bytes
+             << " bytes (" << double(bytes) / (1024.0 * 1024.0) << " MiB)" << endl;
+    }
+    return cache;
+    }
 
-	if (show_output_log)
-		cout << "----- Overlap detection and writing overlap cache data to disk " << endl;
-
-	vector <float> kernel_tunnel_distance_radius_in_metres;
-	for (unsigned long il=0; il < smoothing_kernel_radius_in_metres.size(); il++)
-		kernel_tunnel_distance_radius_in_metres.push_back(
-			static_cast<float>(great_circle_distance_to_euclidian_distance(
-				static_cast<double>(smoothing_kernel_radius_in_metres[il]))));
-
-	vector<smoothing_io::File> pFile;
-	pFile.reserve(smoothing_kernel_radius_in_metres.size());
-
-	for (unsigned long ir=0; ir < smoothing_kernel_radius_in_metres.size(); ir++)
-		{
-		auto file = smoothing_io::open_cache(cache_filenames[ir], "wb", show_output_log);
-		const uint32_t file_point_count = static_cast<uint32_t>(number_of_points);
-		smoothing_io::write(file.get(), overlap_s2::cache_magic, 1, sizeof(overlap_s2::cache_magic));
-		smoothing_io::write(file.get(), &overlap_s2::endian_marker, sizeof(uint32_t), 1);
-		smoothing_io::write(file.get(), &file_point_count, sizeof(uint32_t), 1);
-		smoothing_io::write(file.get(), &smoothing_kernel_radius_in_metres[ir], sizeof(double), 1);
-		smoothing_io::write(file.get(), spatial_to_original.data(), sizeof(uint32_t), number_of_points);
-		pFile.push_back(std::move(file));
-		}
-
-	const size_t radius_count = smoothing_kernel_radius_in_metres.size();
-	// Large reusable batches substantially reduce OpenMP-region, container and
-	// stdio-call overhead without changing record order or encoded bytes.
-	const size_t cache_block_size = 8192;
-	const size_t block_capacity = min(cache_block_size,
-		iterative_sequence_current_smoothing_point.size());
-	vector<vector<vector<uint8_t>>> block_records(
-		block_capacity, vector<vector<uint8_t>>(radius_count));
-	vector<vector<uint8_t>> compressed_write_buffers(radius_count);
-	const auto overlap_records_begin = std::chrono::high_resolution_clock::now();
-	unsigned next_cache_progress_percent = 10;
-	if (show_output_log && !iterative_sequence_current_smoothing_point.empty())
-		cout << "---0 %" << endl;
-	for (size_t block_begin=0; block_begin < iterative_sequence_current_smoothing_point.size();
-		 block_begin += cache_block_size)
-		{
-		const size_t block_end = min(iterative_sequence_current_smoothing_point.size(),
-			block_begin + cache_block_size);
-		const size_t block_count = block_end - block_begin;
-		const ptrdiff_t parallel_block_count = static_cast<ptrdiff_t>(block_count);
-		exception_ptr failure;
-
-		#pragma omp parallel for num_threads(number_of_threads) schedule(static)
-		for (ptrdiff_t offset=0; offset < parallel_block_count; ++offset)
-			{
-			try
-				{
-				const size_t local_index = static_cast<size_t>(offset);
-				const size_t sequence_index = block_begin + local_index;
-				const uint32_t current_smoothing_point =
-					iterative_sequence_current_smoothing_point[sequence_index];
-				const uint32_t previous_smoothing_point =
-					iterative_sequence_previous_smoothing_point[sequence_index];
-				for (size_t ir=0; ir < radius_count; ++ir)
-					{
-					vector<uint32_t> added;
-					vector<uint32_t> removed;
-					if (sequence_index == 0)
-						{
-						const auto cluster = overlap_cache_tree.findNearestNodeCluster(
-							kdtree_points[current_smoothing_point],
-							kernel_tunnel_distance_radius_in_metres[ir]);
-						added.reserve(cluster.size());
-						for (const auto *node : cluster)
-							added.push_back(node->val.index);
-						}
-					else
-						{
-						auto differences = overlap_cache_tree.findNodeClusterDifferences(
-							kdtree_points[current_smoothing_point],
-							kernel_tunnel_distance_radius_in_metres[ir],
-							kdtree_points[previous_smoothing_point],
-							kernel_tunnel_distance_radius_in_metres[ir]);
-						added = std::move(differences.first);
-						removed = std::move(differences.second);
-						}
-					std::sort(added.begin(), added.end());
-					std::sort(removed.begin(), removed.end());
-					overlap_s2::encode_record(
-						current_smoothing_point, previous_smoothing_point,
-						added, removed, number_of_points, block_records[local_index][ir]);
-					}
-				}
-			catch (...)
-				{
-				#pragma omp critical (overlap_cache_worker_failure)
-					{
-					if (!failure) failure = current_exception();
-					}
-				}
-			}
-		if (failure) rethrow_exception(failure);
-
-		// Assemble each radius into one contiguous byte stream. The size prefix
-		// and payload bytes remain in exactly the same dependency order.
-		for (size_t ir=0; ir < radius_count; ++ir)
-			{
-			size_t bytes = 0;
-			for (size_t local_index=0; local_index < block_count; ++local_index)
-				{
-				const size_t record_size = block_records[local_index][ir].size();
-				if (bytes > numeric_limits<size_t>::max() - sizeof(uint64_t) ||
-					record_size > numeric_limits<size_t>::max() - sizeof(uint64_t) - bytes)
-					throw length_error("Overlap write batch is too large.");
-				bytes += sizeof(uint64_t) + record_size;
-				}
-			vector<uint8_t> &write_buffer = compressed_write_buffers[ir];
-			write_buffer.resize(bytes);
-			size_t position = 0;
-			for (size_t local_index=0; local_index < block_count; ++local_index)
-				{
-				const vector<uint8_t> &record = block_records[local_index][ir];
-				const uint64_t record_size = record.size();
-				std::memcpy(write_buffer.data() + position, &record_size, sizeof(record_size));
-				position += sizeof(record_size);
-				if (!record.empty())
-					std::memcpy(write_buffer.data() + position, record.data(), record.size());
-				position += record.size();
-				}
-			smoothing_io::write(pFile[ir].get(), write_buffer.data(), 1, write_buffer.size());
-			}
-
-		for (size_t local_index=0; local_index < block_count; ++local_index)
-			{
-			const size_t sequence_index = block_begin + local_index;
-			const size_t completed_records = sequence_index + 1;
-			while (next_cache_progress_percent <= 100 &&
-				completed_records * 100 >=
-				iterative_sequence_current_smoothing_point.size() * next_cache_progress_percent)
-				{
-				if (show_output_log)
-					cout << "---" << next_cache_progress_percent << " %" << endl;
-				next_cache_progress_percent += 10;
-				}
-			}
-		}
-	if (show_output_log)
-		cout << "----- Overlap detection and writing cache to disk time "
-			<< std::chrono::duration_cast<std::chrono::nanoseconds>(
-				std::chrono::high_resolution_clock::now() - overlap_records_begin).count() * 1e-9
-			<< " s" << endl;
-
-	for (unsigned long ir=0; ir < smoothing_kernel_radius_in_metres.size(); ir++)
-		smoothing_io::close(pFile[ir]);
-	overlap_cache_tree.free_memory();
-	free_vector_memory(kdtree_points);
-	}
+void write_overlap_cache_data_to_disk(const OverlapCacheData &cache,
+    const string &filename, const bool show_output_log = true)
+    {
+    auto file = smoothing_io::open_cache(filename, "wb", show_output_log);
+    const uint32_t count = static_cast<uint32_t>(cache.records.size());
+    smoothing_io::write(file.get(), overlap_s2::cache_magic, 1, 8);
+    smoothing_io::write(file.get(), &overlap_s2::endian_marker, 4, 1);
+    smoothing_io::write(file.get(), &count, 4, 1);
+    smoothing_io::write(file.get(), &cache.radius, 8, 1);
+    smoothing_io::write(file.get(), cache.spatial_to_original.data(), 4, count);
+    for (size_t i = 0; i < count; ++i) {
+        const size_t record_size = overlap_s2::encoded_record_size(cache.records[i].get());
+        const uint64_t size = record_size;
+        smoothing_io::write(file.get(), &size, 8, 1);
+        smoothing_io::write(file.get(), cache.records[i].get(), 1, record_size);
+    }
+    smoothing_io::close(file);
+    }
 
 #if defined(__GNUC__) || defined(__clang__)
 #define SMOOTHING_NOINLINE __attribute__((noinline))
@@ -2141,9 +2075,17 @@ unique_ptr<KdTreeCacheData> generate_cache_data_in_memory(
         branches.insert(branches.end(),singles.begin(),singles.end());
         kdtree_cache_data->records[i]=encode_record(branches,counts,kdtree_cache_data->record_sizes[i]);
     });
-    if (show_output_log)
+    if (show_output_log) {
+        size_t bytes = sizeof(KdTreeCacheData) + kdtree_cache_data->kdtree.allocated_node_bytes()
+            + kdtree_cache_data->spatial_to_original.capacity() * sizeof(uint32_t)
+            + kdtree_cache_data->records.capacity() * sizeof(unique_ptr<uint8_t[]>)
+            + kdtree_cache_data->record_sizes.capacity() * sizeof(size_t);
+        for (size_t size : kdtree_cache_data->record_sizes) bytes += size;
         cout << "----- KD-tree cache generation " << std::chrono::duration<double>(
             std::chrono::steady_clock::now()-logging_begin).count() << " s" << endl;
+        cout << "----- KD-tree cache constructed. Cache memory: " << bytes
+             << " bytes (" << double(bytes) / (1024.0 * 1024.0) << " MiB)" << endl;
+    }
     return kdtree_cache_data;
 }
 
@@ -2174,249 +2116,29 @@ void validate_record(const uint8_t *p,size_t size,size_t n) {
     if (pos!=size) throw runtime_error("Trailing KD-tree cache record bytes.");
 }
 
-string make_cache_filename(const string &kdtree_cache_data_folder,double radius) {
-    radius=cap_smoothing_radius(radius);
-    if (radius==0) radius=0; // Normalize negative zero.
-    static_assert(sizeof(double)==8,"Cache requires 64-bit double.");
-    std::ostringstream cache_filename_stream;
-    cache_filename_stream.imbue(std::locale::classic());
-    // Decimal metres with leading zeros to at least eight characters.
-    // Retain fractional precision instead of rounding distinct radii together.
-    cache_filename_stream.precision(std::numeric_limits<double>::max_digits10);
-    cache_filename_stream<<kdtree_cache_data_folder<<"kdtree_cache_data_r_"
-        <<std::setfill('0')<<std::setw(8)<<radius<<"_m.bin";
-    return cache_filename_stream.str();
-}
-
-void encode_record_reusable(const vector<uint32_t> &ids, const uint32_t *r,
-                            vector<uint8_t> &record) {
-    size_t size = 0;
-    // First pass sizes; second writes. Keep the output vector's capacity across batches.
-    for (int pass = 0; pass < 2; ++pass) {
-        size_t pos = 8;
-        uint8_t *out = pass ? record.data() : nullptr;
-        if (out) std::memcpy(out, r, 8);
-        for (size_t channel = 0, begin = 0; channel < 2; ++channel) {
-            const size_t end = begin + r[channel];
-            for (size_t j = begin; j < end;) {
-                const uint32_t base = ids[j];
-                size_t stop = j + 1;
-                // Count byte stores length minus one: 0..255 means 1..256 references.
-                while (stop < end && stop - j < 256 && ids[stop] - ids[stop - 1] <= 255) ++stop;
-                if (out) {
-                    out[pos] = static_cast<uint8_t>(stop - j - 1);
-                    for (unsigned b = 0; b < 4; ++b) out[pos + 1 + b] = static_cast<uint8_t>(base >> (8 * b));
-                    for (size_t k = j + 1; k < stop; ++k) out[pos + 5 + k - j - 1] = static_cast<uint8_t>(ids[k] - ids[k - 1]);
-                }
-                pos += 5 + stop - j - 1;
-                j = stop;
-            }
-            begin = end;
-        }
-        if (!pass) { size = pos; record.resize(pos); }
-        else if (pos != size) throw runtime_error("Spatial record size mismatch.");
-    }
-    // Validate all decoded indices and both channel boundaries, including duplicates.
-    size_t pos = 8, j = 0;
-    for (size_t channel = 0; channel < 2; ++channel) {
-        const size_t end = j + r[channel];
-        while (j < end) {
-            if (size - pos < 5) throw runtime_error("Truncated spatial block.");
-            const unsigned extra = record[pos++];
-            uint32_t base = 0;
-            for (unsigned b = 0; b < 4; ++b) base |= uint32_t(record[pos++]) << (8 * b);
-            if (extra >= end - j || extra > size - pos || ids[j++] != base)
-                throw runtime_error("Spatial block validation failed.");
-            uint32_t previous = base;
-            for (unsigned k = 0; k < extra; ++k) {
-                const uint32_t decoded = previous + record[pos++];
-                if (ids[j++] != decoded) throw runtime_error("Spatial decoded index mismatch.");
-                previous = decoded;
-            }
-        }
-
-    }
-    if (pos != size) throw runtime_error("Trailing spatial bytes.");
-}
-
-unique_ptr<KdTreeCacheData> prepare_cache_geometry(
-    const double *lat,const double *lon,size_t n,double radius,int threads,
-    vector<smoothing_kdtree::Point> &points) {
-    smoothing_kdtree::validate_number_of_threads(threads);
-    radius=cap_smoothing_radius(radius);
-    points=generate_vector_of_kdtree_points_from_lat_lon_points_provided_as_arrays(lat,lon,n,threads);
-    unique_ptr<KdTreeCacheData> kdtree_cache_data(new KdTreeCacheData());
-    kdtree_cache_data->radius=radius;
-    vector<pair<uint64_t,uint32_t>> keys(n);
-    smoothing_kdtree::parallel_for(n,200,threads,[&](size_t i) {
-        keys[i]=std::make_pair(spherical_s2_style_key(points[i].coords[0],points[i].coords[1],points[i].coords[2]),
-                               static_cast<uint32_t>(i));
-    });
-    sort_keys(keys,threads);
-    kdtree_cache_data->spatial_to_original.resize(n);
+void write_cache_data_to_disk(const KdTreeCacheData &cache,
+    const string &filename, const bool show_output_log = true) {
+    auto file = smoothing_io::open_cache(filename, "wb", show_output_log);
+    const char magic[8] = {'S','2','C','A','C','H','E','1'};
+    const uint32_t endian = 0x01020304, count = static_cast<uint32_t>(cache.records.size());
+    smoothing_io::write(file.get(), magic, 1, 8);
+    smoothing_io::write(file.get(), &endian, 4, 1);
+    smoothing_io::write(file.get(), &count, 4, 1);
+    smoothing_io::write(file.get(), &cache.radius, 8, 1);
+    // Only the tree is serialized temporarily; compressed records are streamed.
     {
-        vector<smoothing_kdtree::Point> reordered(n);
-        smoothing_kdtree::parallel_for(n,200,threads,[&](size_t i) {
-            const uint32_t old=keys[i].second;
-            kdtree_cache_data->spatial_to_original[i]=old;
-            reordered[i]=points[old];
-            reordered[i].index=static_cast<smoothing_kdtree::Index>(i);
-        });
-        points.swap(reordered);
+        const auto tree = cache.kdtree.serialize();
+        const uint64_t size = tree.size();
+        smoothing_io::write(file.get(), &size, 8, 1);
+        smoothing_io::write(file.get(), tree.data(), 1, tree.size());
     }
-    vector<pair<uint64_t,uint32_t>>().swap(keys);
-    if (n && !kdtree_cache_data->kdtree.buildKdTree_and_do_not_change_the_kdtree_points_vector(points))
-        throw runtime_error("Cannot build KD-tree cache tree.");
-    return kdtree_cache_data;
-}
-
-struct generation_worker_buffers {
-    vector<uint32_t> branches, singles;
-};
-
-void collect_sorted_record(const smoothing_kdtree::Node *root,
-    const smoothing_kdtree::Point &point, float squared,
-    generation_worker_buffers &scratch, uint32_t (&counts)[2]) {
-    scratch.branches.clear();
-    scratch.singles.clear();
-    collect_collapsed(root,point,squared,scratch.branches,scratch.singles);
-    counts[0]=static_cast<uint32_t>(scratch.branches.size());
-    counts[1]=static_cast<uint32_t>(scratch.singles.size());
-    std::sort(scratch.branches.begin(),scratch.branches.end());
-    std::sort(scratch.singles.begin(),scratch.singles.end());
-    scratch.branches.insert(scratch.branches.end(),scratch.singles.begin(),scratch.singles.end());
-}
-
-// Write one radius's KD-tree cache data using shared geometry and reusable batch slots.
-// A persistent worker team keeps search buffers across every batch of this radius.
-void write_cache_data_from_prepared_geometry_batched(
-    const KdTreeCacheData &kdtree_cache_data,
-    const vector<smoothing_kdtree::Point> &points,double radius,const string &kdtree_cache_data_folder,int threads,
-    const vector<uint8_t> &tree,vector<vector<uint8_t>> &records,vector<uint8_t> &write_buffer,
-    const bool show_output_log = true) {
-    radius=cap_smoothing_radius(radius);
-    const size_t n=points.size();
-    if (show_output_log)
-        cout << "----- Generating kd-tree cache (radius " << radius << " m)" << endl;
-    smoothing_io::File file(nullptr,&fclose);
-    const char magic[8]={'S','2','C','A','C','H','E','1'};
-    const uint32_t endian=0x01020304, point_count=static_cast<uint32_t>(n);
-    const uint64_t tree_size=tree.size();
-    file=smoothing_io::open_cache(make_cache_filename(kdtree_cache_data_folder,radius),"wb",show_output_log);
-    smoothing_io::write(file.get(),magic,1,8);
-    smoothing_io::write(file.get(),&endian,4,1);
-    smoothing_io::write(file.get(),&point_count,4,1);
-    smoothing_io::write(file.get(),&radius,8,1);
-    smoothing_io::write(file.get(),&tree_size,8,1);
-    smoothing_io::write(file.get(),tree.data(),1,tree.size());
-    smoothing_io::write(file.get(),kdtree_cache_data.spatial_to_original.data(),4,n);
-
-    unsigned next_progress_percent=10;
-    if (show_output_log) cout << "---0 %" << endl;
-    const size_t batch_size=8192;
-    const float distance=static_cast<float>(great_circle_distance_to_euclidian_distance(radius));
-    const float squared=distance*distance;
-    std::exception_ptr failure;
-    bool failed_batch=false;
-    #pragma omp parallel num_threads(threads)
-    {
-        generation_worker_buffers scratch;
-        for (size_t begin=0;begin<n;begin+=batch_size) {
-            const size_t count=std::min(batch_size,n-begin);
-            #pragma omp barrier
-            #pragma omp for schedule(static)
-            for (size_t offset=0;offset<count;++offset) {
-                try {
-                    uint32_t counts[2];
-                    collect_sorted_record(kdtree_cache_data.kdtree.root,points[begin+offset],squared,scratch,counts);
-                    encode_record_reusable(scratch.branches,counts,records[offset]);
-                } catch (...) {
-                    #pragma omp critical (saved_s2_generation_failure)
-                    { if (!failure) failure=std::current_exception(); }
-                }
-            }
-            // Both implicit barriers are required: writing sees completed records,
-            // and no worker reuses a slot until writing the previous batch finishes.
-            #pragma omp single
-            {
-                if (!failure) {
-                    try {
-                        size_t bytes=0;
-                        for (size_t offset=0;offset<count;++offset) {
-                            const size_t size=records[offset].size();
-                            if (bytes>numeric_limits<size_t>::max()-sizeof(uint64_t) ||
-                                size>numeric_limits<size_t>::max()-sizeof(uint64_t)-bytes)
-                                throw length_error("Saved KD-tree write batch is too large.");
-                            bytes+=sizeof(uint64_t)+size;
-                        }
-                        write_buffer.resize(bytes);
-                        size_t position=0;
-                        for (size_t offset=0;offset<count;++offset) {
-                            const uint64_t size=records[offset].size();
-                            std::memcpy(write_buffer.data()+position,&size,sizeof(size));
-                            position+=sizeof(size);
-                            std::memcpy(write_buffer.data()+position,records[offset].data(),
-                                        records[offset].size());
-                            position+=records[offset].size();
-                        }
-                        smoothing_io::write(file.get(),write_buffer.data(),1,write_buffer.size());
-                        if (show_output_log) {
-                            while (next_progress_percent < 100 &&
-                                   uint64_t(begin+count)*100 >= uint64_t(next_progress_percent)*n) {
-                                cout << "---" << next_progress_percent << " %" << endl;
-                                next_progress_percent+=10;
-                            }
-                        }
-                    } catch (...) { failure=std::current_exception(); }
-                }
-                failed_batch=static_cast<bool>(failure);
-            }
-            if (failed_batch) break;
-        }
+    smoothing_io::write(file.get(), cache.spatial_to_original.data(), 4, count);
+    for (size_t i = 0; i < count; ++i) {
+        const uint64_t size = cache.record_sizes[i];
+        smoothing_io::write(file.get(), &size, 8, 1);
+        smoothing_io::write(file.get(), cache.records[i].get(), 1, cache.record_sizes[i]);
     }
-    if (failure) std::rethrow_exception(failure);
     smoothing_io::close(file);
-    if (show_output_log) cout << "---100 %" << endl;
-
-}
-
-// Geometry and serialized tree bytes are independent of smoothing radius.
-// Process radii sequentially so encoded memory remains one bounded batch,
-// rather than scaling with the number of complete caches or requested radii.
-void generate_cache_data_and_write_batched(
-    const double *lat,const double *lon,size_t n,const vector<double> &radii,
-    const string &kdtree_cache_data_folder,int threads, const bool show_output_log = true) {
-    const auto logging_begin = std::chrono::steady_clock::now();
-    smoothing_kdtree::validate_number_of_threads(threads);
-    if (radii.empty()) throw invalid_argument("At least one smoothing radius is required.");
-    vector<double> capped_radii;
-    capped_radii.reserve(radii.size());
-    vector<string> filenames;
-    filenames.reserve(radii.size());
-    for (double radius:radii) {
-        capped_radii.push_back(cap_smoothing_radius(radius));
-        filenames.push_back(make_cache_filename(kdtree_cache_data_folder,capped_radii.back()));
-    }
-    std::sort(filenames.begin(),filenames.end());
-    if (std::adjacent_find(filenames.begin(),filenames.end())!=filenames.end())
-        throw invalid_argument("Smoothing radii must have distinct cache filenames after capping.");
-
-    vector<smoothing_kdtree::Point> points;
-    auto kdtree_cache_data=prepare_cache_geometry(lat,lon,n,capped_radii.front(),threads,points);
-    const auto tree=kdtree_cache_data->kdtree.serialize();
-    const size_t capacity=std::min<size_t>(8192,n);
-    vector<vector<uint8_t>> records(capacity);
-    vector<uint8_t> write_buffer;
-    for (size_t i=0;i<radii.size();++i)
-        write_cache_data_from_prepared_geometry_batched(*kdtree_cache_data,points,capped_radii[i],kdtree_cache_data_folder,threads,tree,records,write_buffer,show_output_log);
-    if (show_output_log)
-        cout << "----- KD-tree cache generation " << std::chrono::duration<double>(
-            std::chrono::steady_clock::now()-logging_begin).count() << " s" << endl;
-}
-
-void generate_cache_data_and_write_batched(
-    const double *lat,const double *lon,size_t n,double radius,const string &kdtree_cache_data_folder,int threads, const bool show_output_log = true) {
-    generate_cache_data_and_write_batched(lat,lon,n,vector<double>(1,radius),kdtree_cache_data_folder,threads, show_output_log);
 }
 
 unique_ptr<KdTreeCacheData> read_cache_data_from_binary_file(const string &cache_filename, const bool show_output_log = true) {
@@ -2480,10 +2202,6 @@ unique_ptr<KdTreeCacheData> read_cache_data_from_binary_file(const string &cache
 }
 } // namespace saved_s2
 
-void generate_kdtree_cache_data_and_write_to_disk(
-    const double *lat,const double *lon,size_t n,double radius,const string kdtree_cache_data_folder,int threads, const bool show_output_log = true) {
-    saved_s2::generate_cache_data_and_write_batched(lat,lon,n,radius,kdtree_cache_data_folder,threads, show_output_log);
-}
 
 void free_kdtree_cache_data(char *&kdtree_cache_data_pointer) {
     delete reinterpret_cast<KdTreeCacheData*>(kdtree_cache_data_pointer);

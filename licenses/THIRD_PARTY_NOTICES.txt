@@ -1,0 +1,29 @@
+OPENMP RUNTIME NOTICES
+
+Smoothing on Sphere and the modified KD-tree retain their MIT notices in LICENSE.
+The texts in this directory cover LLVM's OpenMP runtime, which the release wheel
+configurations bundle using wheel repair tools. Source archives include these
+notices but contain no runtime binaries.
+
+LLVM OpenMP (libomp.so / libomp.dll / libomp.dylib)
+-----------------------------------------------
+The Linux, Windows and macOS release wheel configurations use LLVM's OpenMP
+runtime. The Linux workflow selects Clang explicitly and checks that the repaired
+wheel contains libomp and no libgomp binary.
+Its upstream license is Apache-2.0 WITH LLVM-exception. The complete upstream
+openmp/LICENSE.TXT, including its legacy notices, is in LLVM-OpenMP.txt.
+
+Project: https://openmp.llvm.org/
+License text retrieved from the immutable llvmorg-23.1.5 release tag:
+https://github.com/llvm/llvm-project/blob/llvmorg-23.1.5/openmp/LICENSE.TXT
+
+The tag reference identifies the license text snapshot, not the versions of
+runtime binaries selected by the build environment. Wheel repair may rename
+runtime binaries by adding a hash. Such renaming does not change their license.
+
+Optional local GCC builds
+-------------------------
+Local Linux source builds can use GCC and the system-provided GNU OpenMP runtime
+(libgomp). The official release wheel configuration does not bundle libgomp.
+Anyone redistributing an alternative build that bundles GNU runtime binaries
+must supply the applicable GNU notices and meet their redistribution terms.

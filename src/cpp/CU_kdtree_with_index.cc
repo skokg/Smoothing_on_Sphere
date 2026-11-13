@@ -267,6 +267,11 @@ namespace kdtree
 
 		public:
 
+		size_t allocated_node_bytes() const noexcept
+			{
+			return node_storage.capacity() * sizeof(Node);
+			}
+
 		KdTree()
 			{
 			root = nullptr;

@@ -7,32 +7,75 @@ absolute cache filenames, timing and progress messages.
 import ctypes
 import operator
 import os
+import sys
+import tempfile
 
 import numpy as np
 
+# Windows wheel repair inserts the bundled OpenMP DLL search path here.
+# delvewheel: patch
+
 _library_folder = os.path.dirname(os.path.abspath(__file__))
-_library_path = os.path.join(_library_folder, "smoothing_on_sphere_Cxx_shared_library.so")
+_library_names = {
+    "linux": "libsmoothing_on_sphere.so",
+    "win32": "smoothing_on_sphere.dll",
+    "darwin": "libsmoothing_on_sphere.dylib",
+}
+if sys.platform not in _library_names:
+    raise ImportError("smoothing_on_sphere supports Linux, Windows and macOS.")
+_library_path = os.path.join(_library_folder, _library_names[sys.platform])
 _compile_advice = (
-    "To compile on Linux, install GNU Make and a C++11-compatible compiler "
-    "with OpenMP support (g++ by default), then run `make` in the folder "
-    f"containing smoothing_on_sphere_library.py and the Makefile: {_library_folder}. "
-    "This creates smoothing_on_sphere_Cxx_shared_library.so in that folder. "
-    "To rebuild an existing library, run `make -B`."
+    "Install a compatible smoothing_on_sphere wheel, or build from source with "
+    "a C++ compiler and OpenMP runtime. For manual Linux compilation, run `make` "
+    "in the repository root, then use smoothing_on_sphere.py and "
+    "libsmoothing_on_sphere.so from src together."
 )
+if sys.platform == "win32":
+    _compile_advice += (
+        " For Windows source installations, set LIBOMP_PREFIX at import time "
+        "to the LLVM OpenMP prefix containing bin/libomp.dll."
+    )
 if not os.path.isfile(_library_path):
     raise ImportError(
         f"Smoothing shared library not found: {_library_path}. {_compile_advice}"
     )
 
+# Repaired wheels arrange their bundled dependencies at the marker above.
+# Try that first so an unrelated LIBOMP_PREFIX cannot interfere with a wheel.
+# Source installations can fall back to an explicitly configured runtime.
+# Keep the registration alive for any later native dependency loads.
+_openmp_dll_directory = None
 try:
     libc = ctypes.CDLL(_library_path)
 except OSError as exc:
-    raise ImportError(
-        f"Cannot load smoothing shared library: {_library_path}. {_compile_advice}"
-    ) from exc
+    _openmp_prefix = os.environ.get("LIBOMP_PREFIX") if sys.platform == "win32" else None
+    if not _openmp_prefix:
+        raise ImportError(
+            f"Cannot load smoothing shared library: {_library_path}. {_compile_advice}"
+        ) from exc
+    _openmp_bin = os.path.abspath(os.path.join(_openmp_prefix, "bin"))
+    try:
+        _openmp_dll_directory = os.add_dll_directory(_openmp_bin)
+        libc = ctypes.CDLL(_library_path)
+    except OSError as retry_exc:
+        if _openmp_dll_directory is not None:
+            _openmp_dll_directory.close()
+            _openmp_dll_directory = None
+        raise ImportError(
+            f"Cannot load smoothing shared library: {_library_path} using "
+            f"the configured OpenMP DLL directory {_openmp_bin}. {_compile_advice}"
+        ) from retry_exc
 
 ND_POINTER_1D = np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags=("C_CONTIGUOUS", "ALIGNED"))
 ND_POINTER_2D = np.ctypeslib.ndpointer(dtype=np.float64, ndim=2, flags=("C_CONTIGUOUS", "ALIGNED"))
+
+try:
+    libc.smoothing_wrapper_abi_version.argtypes = []
+    libc.smoothing_wrapper_abi_version.restype = ctypes.c_int
+except AttributeError as exc:
+    raise ImportError("Reinstall smoothing_on_sphere: native wrapper ABI 3 required.") from exc
+if libc.smoothing_wrapper_abi_version() != 3:
+    raise ImportError("Incompatible smoothing native library: wrapper ABI 3 required.")
 
 libc.smoothing_get_last_error.argtypes = []
 libc.smoothing_get_last_error.restype = ctypes.c_char_p
@@ -155,12 +198,11 @@ def _radius(value):
         raise ValueError("smoothing_kernel_radius_in_metres must be finite and nonnegative")
     return value
 
-def _folder(path):
+def _filename(path):
     path = os.fsencode(os.fspath(path))
-    if not path or b"\0" in path:
-        raise ValueError("Cache data folder must be a nonempty path without null bytes")
-    # C++ appends a filename directly to this folder prefix.
-    return os.path.join(path, b"")
+    if not path or b"\0" in path or os.path.basename(path) in (b"", b".", b".."):
+        raise ValueError("Cache filename must be a nonempty file path without null bytes")
+    return path
 
 # Tree construction, direct smoothing and cleanup
 _bind("construct_KdTree_ctypes", [ND_POINTER_1D, ND_POINTER_1D, ctypes.c_size_t, ctypes.c_int], True)
@@ -226,57 +268,51 @@ def smooth_multiple_fields_simultaneously_using_KdTree(smoothing_kernel_radius_i
 
 # KD-tree cache data: S2 spatial ordering, collapsed subtrees and 8-bit deltas
 # Generation, loading and smoothing accept show_output_log=True for native output.
-_bind("generate_kdtree_cache_data_and_write_to_disk_ctypes",
-      [ND_POINTER_1D, ND_POINTER_1D, ctypes.c_size_t, ctypes.c_double, ctypes.c_char_p, ctypes.c_int, ctypes.c_bool])
 
-_bind("generate_kdtree_cache_data_for_multiple_radii_ctypes",
-      [ND_POINTER_1D, ND_POINTER_1D, ctypes.c_size_t, ND_POINTER_1D,
-       ctypes.c_size_t, ctypes.c_char_p, ctypes.c_int, ctypes.c_bool])
 
 _bind("generate_kdtree_cache_data_in_memory_ctypes",
       [ND_POINTER_1D, ND_POINTER_1D, ctypes.c_size_t, ctypes.c_double, ctypes.c_int, ctypes.c_bool], True)
 
 def generate_kdtree_cache_data_in_memory(lat, lon, smoothing_kernel_radius_in_metres, number_of_threads, show_output_log=True):
-    """Prepare reusable KD-tree cache data with collapsed S2 neighbourhoods in memory."""
+    """Build one radius's KD-tree cache in memory and log its retained storage size."""
     lat, lon = _coordinates(lat, lon)
     return _new_handle("kdtree_cache", lat.size, libc.generate_kdtree_cache_data_in_memory_ctypes,
                        lat, lon, lat.size, _radius(smoothing_kernel_radius_in_metres),
                        _thread_count(number_of_threads), bool(show_output_log))
 
-def generate_kdtree_cache_data_and_write_to_disk(
-        lat, lon, smoothing_kernel_radius_in_metres, kdtree_cache_data_folder, number_of_threads, show_output_log=True):
-    """Write one cache per radius, accepting a scalar or a nonempty 1D sequence.
+def _write_cache_to_disk(cache, kind, filename, function, show_output_log):
+    """Publish a complete cache file; preserve any existing file on write failure."""
+    pointer = _require_handle(cache, kind)
+    destination = os.path.abspath(os.fsdecode(_filename(filename)))
+    folder = os.path.dirname(destination)
+    # The caller creates the destination directory. Staging on the same filesystem
+    # lets os.replace publish the complete file atomically, including on Windows.
+    with tempfile.TemporaryDirectory(prefix=".smoothing-cache-", dir=folder) as staging:
+        temporary_file = os.path.join(staging, "cache.tmp")
+        function(pointer, _filename(temporary_file))
+        os.replace(temporary_file, destination)
+    if show_output_log:
+        print("----- Cache saved: " + os.path.abspath(destination), flush=True)
 
-    Coordinates, S2 ordering, tree construction and serialization are shared.
-    Each radius's records are generated in bounded batches; existing files are replaced.
-    """
-    lat, lon = _coordinates(lat, lon)
-    if np.ma.isMaskedArray(smoothing_kernel_radius_in_metres):
-        raise TypeError("Smoothing radii must not be a masked array")
-    radii = np.asarray(smoothing_kernel_radius_in_metres)
-    kdtree_cache_data_folder = _folder(kdtree_cache_data_folder)
-    threads = _thread_count(number_of_threads)
-    if radii.ndim == 0:
-        libc.generate_kdtree_cache_data_and_write_to_disk_ctypes(
-            lat, lon, lat.size, _radius(smoothing_kernel_radius_in_metres), kdtree_cache_data_folder, threads, bool(show_output_log))
-        return
-    radii = _float_array(radii, "smoothing_kernel_radius_in_metres")
-    if np.any(radii < 0):
-        raise ValueError("Smoothing radii must be nonnegative")
-    if np.unique(radii).size != radii.size:
-        raise ValueError("Smoothing radii must be distinct")
-    libc.generate_kdtree_cache_data_for_multiple_radii_ctypes(
-        lat, lon, lat.size, radii, radii.size, kdtree_cache_data_folder, threads, bool(show_output_log))
+
+_bind("write_kdtree_cache_data_to_disk_ctypes", [ctypes.c_void_p, ctypes.c_char_p])
+
+
+def save_kdtree_cache(kdtree_cache_data, filename, show_output_log=True):
+    """Save a cache to the exact filename; replace an existing file only on success."""
+    _write_cache_to_disk(kdtree_cache_data, "kdtree_cache", filename,
+                        libc.write_kdtree_cache_data_to_disk_ctypes, show_output_log)
+
 
 _bind("read_kdtree_cache_data_from_binary_file_ctypes",
-      [ctypes.c_char_p, ctypes.c_double, ctypes.c_bool], True)
+      [ctypes.c_char_p, ctypes.c_bool], True)
 
-def read_kdtree_cache_data_from_binary_file(
-        kdtree_cache_data_folder, smoothing_kernel_radius_in_metres, show_output_log=True):
+def load_kdtree_cache(filename, show_output_log=True):
+    """Load the specified file; its stored radius and point count are validated in C++."""
     # The native cache owns its point count and validates it on each smoothing call.
     return _new_handle("kdtree_cache", None,
         libc.read_kdtree_cache_data_from_binary_file_ctypes,
-        _folder(kdtree_cache_data_folder), _radius(smoothing_kernel_radius_in_metres), bool(show_output_log))
+        _filename(filename), bool(show_output_log))
 
 _bind("smooth_field_using_kdtree_cache_data_ctypes",
       [ND_POINTER_1D, ND_POINTER_1D, ctypes.c_size_t, ctypes.c_void_p, ND_POINTER_1D, ctypes.c_int, ctypes.c_bool])
@@ -327,34 +363,35 @@ def free_kdtree_cache_data(kdtree_cache_data):
 
 # Overlap cache data: S2 spatial ordering, point differences and 8-bit deltas
 # Generation, loading and smoothing accept show_output_log=True for native output.
-_bind("generate_overlap_cache_data_and_write_to_disk_ctypes",
-      [ND_POINTER_1D, ND_POINTER_1D, ctypes.c_size_t, ND_POINTER_1D,
-       ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_bool])
+_bind("generate_overlap_cache_data_in_memory_ctypes",
+      [ND_POINTER_1D, ND_POINTER_1D, ctypes.c_size_t, ctypes.c_double, ctypes.c_int, ctypes.c_bool], True)
 
-def generate_overlap_cache_data_and_write_to_disk(
-        lat, lon, smoothing_kernel_radius_in_metres, overlap_cache_data_folder, number_of_threads, show_output_log=True):
+
+def generate_overlap_cache_data_in_memory(lat, lon, smoothing_kernel_radius_in_metres,
+                                         number_of_threads, show_output_log=True):
+    """Build one radius's overlap cache in memory and log its retained storage size."""
     lat, lon = _coordinates(lat, lon)
-    if np.ma.isMaskedArray(smoothing_kernel_radius_in_metres):
-        raise TypeError("Smoothing radii must not be a masked array")
-    radii = np.asarray(smoothing_kernel_radius_in_metres)
-    if radii.ndim == 0:
-        radii = radii.reshape(1)
-    radii = _float_array(radii, "smoothing_kernel_radius_in_metres")
-    if np.any(radii < 0):
-        raise ValueError("Smoothing radii must be nonnegative")
-    libc.generate_overlap_cache_data_and_write_to_disk_ctypes(
-        lat, lon, lat.size, radii, radii.size, _folder(overlap_cache_data_folder),
-        0, _thread_count(number_of_threads), bool(show_output_log))
+    return _new_handle("overlap_cache", lat.size, libc.generate_overlap_cache_data_in_memory_ctypes,
+                       lat, lon, lat.size, _radius(smoothing_kernel_radius_in_metres),
+                       _thread_count(number_of_threads), bool(show_output_log))
+
+
+_bind("write_overlap_cache_data_to_disk_ctypes", [ctypes.c_void_p, ctypes.c_char_p])
+
+
+def save_overlap_cache(overlap_cache_data, filename, show_output_log=True):
+    """Save a cache to the exact filename; replace an existing file only on success."""
+    _write_cache_to_disk(overlap_cache_data, "overlap_cache", filename,
+                        libc.write_overlap_cache_data_to_disk_ctypes, show_output_log)
+
 
 _bind("read_overlap_cache_data_from_binary_file_ctypes",
-      [ctypes.c_char_p, ctypes.c_double, ctypes.c_bool], True)
+      [ctypes.c_char_p, ctypes.c_bool], True)
 
-def read_overlap_cache_data_from_binary_file(overlap_cache_data_folder,
-                                       smoothing_kernel_radius_in_metres, show_output_log=True):
-    """Load a cache whose point count is read and validated by C++."""
+def load_overlap_cache(filename, show_output_log=True):
+    """Load the specified file; its stored radius and point count are validated in C++."""
     return _new_handle("overlap_cache", None,
-        libc.read_overlap_cache_data_from_binary_file_ctypes, _folder(overlap_cache_data_folder),
-        _radius(smoothing_kernel_radius_in_metres), bool(show_output_log))
+        libc.read_overlap_cache_data_from_binary_file_ctypes, _filename(filename), bool(show_output_log))
 
 _bind("free_overlap_cache_data_ctypes", [ctypes.c_void_p])
 

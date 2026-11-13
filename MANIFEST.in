@@ -1,0 +1,13 @@
+# Explicit source archive contents; generated caches and binaries are excluded.
+global-exclude *
+include pyproject.toml setup.py MANIFEST.in Makefile README.md LICENSE
+include licenses/THIRD_PARTY_NOTICES.txt licenses/LLVM-OpenMP.txt
+include src/smoothing_on_sphere.py
+include src/cpp/CC_smoothing_on_sphere_python_lib.cc
+include src/cpp/CU_smoothing_on_sphere_code.cc src/cpp/CU_kdtree_with_index.cc
+include tests/test_smoothing_on_sphere.py
+include examples/Example_A_kdtree_direct.py
+include examples/Example_B_kdtree_using_saved_cache.py
+include examples/Example_C_overlap_using_saved_cache.py
+include examples/Example_D_with_missing_data.py
+include examples/sample_data/example_field1.nc examples/sample_data/example_field2.nc

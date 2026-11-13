@@ -1,3 +1,15 @@
+// Native API exports for smoothing and single-radius in-memory caches.
+#if !defined(_OPENMP)
+#error "Smoothing on Sphere requires OpenMP; enable it in the C++ compiler."
+#endif
+#if defined(_WIN32)
+#define SMOOTHING_API extern "C" __declspec(dllexport)
+#else
+#define SMOOTHING_API extern "C" __attribute__((visibility("default")))
+#endif
+
+SMOOTHING_API int smoothing_wrapper_abi_version() noexcept { return 3; }
+
 #include <iostream>
 #include <algorithm>
 #include <vector>
@@ -43,7 +55,7 @@ void smoothing_record_error(const char *function, const char *message) noexcept
 
 // Borrowed string, valid until the next operation on the same native thread.
 // Reading the message does not clear it.
-extern "C" const char *smoothing_get_last_error() noexcept
+SMOOTHING_API const char *smoothing_get_last_error() noexcept
 {
     return smoothing_last_error;
 }
@@ -52,7 +64,7 @@ extern "C" const char *smoothing_get_last_error() noexcept
     catch (const std::exception &exception) { smoothing_record_error(__func__, exception.what()); return failure_result; } \
     catch (...) { smoothing_record_error(__func__, "Unknown C++ exception in smoothing library."); return failure_result; }
 
-extern "C" void *construct_KdTree_ctypes(const double * const lat, const double * const lon, const size_t size, const int number_of_threads) noexcept
+SMOOTHING_API void *construct_KdTree_ctypes(const double * const lat, const double * const lon, const size_t size, const int number_of_threads) noexcept
 try
 {
     smoothing_clear_error();
@@ -67,7 +79,7 @@ try
 }
 SMOOTHING_C_API_CATCH(nullptr)
 
-extern "C" int free_KdTree_memory_ctypes(void * const kdtree_void_pointer) noexcept
+SMOOTHING_API int free_KdTree_memory_ctypes(void * const kdtree_void_pointer) noexcept
 try
 {
     smoothing_clear_error();
@@ -76,7 +88,7 @@ try
 }
 SMOOTHING_C_API_CATCH(-1)
 
-extern "C" int smooth_field_using_KdTree_ctypes(const double r_kernel_in_metres, const void * const kdtree_void_pointer, const double * const lat, const double * const lon, const double * const area_size, const double * const f,  const size_t number_of_points, double * const f_smoothed, const int number_of_threads, const bool show_output_log = true) noexcept
+SMOOTHING_API int smooth_field_using_KdTree_ctypes(const double r_kernel_in_metres, const void * const kdtree_void_pointer, const double * const lat, const double * const lon, const double * const area_size, const double * const f,  const size_t number_of_points, double * const f_smoothed, const int number_of_threads, const bool show_output_log = true) noexcept
 try
 {
     smoothing_clear_error();
@@ -88,7 +100,7 @@ try
 }
 SMOOTHING_C_API_CATCH(-1)
 
-extern "C" int smooth_multiple_fields_simultaneously_using_KdTree_ctypes(const double r_kernel_in_metres, const void * const kdtree_void_pointer, const double * const lat, const double * const lon, const double * const area_size, const double * const f_multiple_fields_2D_numpy_array,  const size_t number_of_points, const size_t number_of_fields, double * const f_smoothed_multiple_fields_2D_numpy_array, const int number_of_threads, const bool show_output_log = true) noexcept
+SMOOTHING_API int smooth_multiple_fields_simultaneously_using_KdTree_ctypes(const double r_kernel_in_metres, const void * const kdtree_void_pointer, const double * const lat, const double * const lon, const double * const area_size, const double * const f_multiple_fields_2D_numpy_array,  const size_t number_of_points, const size_t number_of_fields, double * const f_smoothed_multiple_fields_2D_numpy_array, const int number_of_threads, const bool show_output_log = true) noexcept
 try
 {
     smoothing_clear_error();
@@ -118,42 +130,40 @@ try
 SMOOTHING_C_API_CATCH(-1)
 
 
-extern "C" int generate_overlap_cache_data_and_write_to_disk_ctypes(const double * const lat, const double * const lon, const size_t number_of_points, const double * const smoothing_kernel_radius_in_metres, const size_t smoothing_kernel_radius_in_metres_size, const char * const overlap_cache_data_folder, const size_t starting_point, const int number_of_threads, const bool show_output_log = true) noexcept
-try
-{
+SMOOTHING_API void *generate_overlap_cache_data_in_memory_ctypes(
+    const double *lat, const double *lon, size_t count, double radius,
+    int threads, bool show_output_log) noexcept
+try {
     smoothing_clear_error();
-    smoothing_kdtree::validate_number_of_threads(number_of_threads);
-    smoothing_kdtree::require_buffer(overlap_cache_data_folder, 1);
-    smoothing_kdtree::require_buffer(smoothing_kernel_radius_in_metres, smoothing_kernel_radius_in_metres_size);
-    if (smoothing_kernel_radius_in_metres_size > static_cast<size_t>(numeric_limits<ptrdiff_t>::max()) / sizeof(double))
-        throw length_error("Smoothing radius array is too large.");
-    vector<double> radii;
-    if (smoothing_kernel_radius_in_metres_size != 0)
-        radii.assign(smoothing_kernel_radius_in_metres,
-                     smoothing_kernel_radius_in_metres + smoothing_kernel_radius_in_metres_size);
-    generate_overlap_cache_data_and_write_to_disk(
-        lat, lon, number_of_points, radii, string(overlap_cache_data_folder), starting_point, number_of_threads, show_output_log);
+    return generate_overlap_cache_data_in_memory(lat, lon, count, radius, threads, show_output_log).release();
+}
+SMOOTHING_C_API_CATCH(nullptr)
+
+SMOOTHING_API int write_overlap_cache_data_to_disk_ctypes(
+    const void *handle, const char *filename) noexcept
+try {
+    smoothing_clear_error();
+    smoothing_kdtree::require_buffer(handle, 1);
+    smoothing_kdtree::require_buffer(filename, 1);
+    write_overlap_cache_data_to_disk(*static_cast<const OverlapCacheData *>(handle), string(filename), false);
     return 0;
 }
 SMOOTHING_C_API_CATCH(-1)
 
-extern "C" void *read_overlap_cache_data_from_binary_file_ctypes(const char * const overlap_cache_data_folder, const double smoothing_kernel_radius_in_metres, const bool show_output_log = true) noexcept
+SMOOTHING_API void *read_overlap_cache_data_from_binary_file_ctypes(const char * const filename, const bool show_output_log = true) noexcept
 try
 {
     smoothing_clear_error();
-    smoothing_kdtree::require_buffer(overlap_cache_data_folder, 1);
-    const double radius = cap_smoothing_radius(smoothing_kernel_radius_in_metres);
-    const string cache_filename = make_overlap_cache_filename(string(overlap_cache_data_folder), radius);
+    smoothing_kdtree::require_buffer(filename, 1);
+    const string cache_filename(filename);
     OverlapCacheData *overlap_cache_data_pointer = nullptr;
     read_overlap_cache_data_from_binary_file(cache_filename, overlap_cache_data_pointer, show_output_log);
     unique_ptr<OverlapCacheData> overlap_cache_data(overlap_cache_data_pointer);
-    if (overlap_cache_data->radius != radius)
-        throw runtime_error("Overlap cache radius mismatch.");
     return overlap_cache_data.release();
 }
 SMOOTHING_C_API_CATCH(nullptr)
 
-extern "C" int free_overlap_cache_data_ctypes(void * overlap_cache_data_void_pointer) noexcept
+SMOOTHING_API int free_overlap_cache_data_ctypes(void * overlap_cache_data_void_pointer) noexcept
 try
 {
     smoothing_clear_error();
@@ -163,7 +173,7 @@ try
 }
 SMOOTHING_C_API_CATCH(-1)
 
-extern "C" int smooth_field_using_overlap_detection_ctypes(const double * const area_size, const double * const f, const size_t number_of_points, const void * const overlap_cache_data_void_pointer, double * const f_smoothed, const int number_of_threads, const bool show_output_log = true) noexcept
+SMOOTHING_API int smooth_field_using_overlap_detection_ctypes(const double * const area_size, const double * const f, const size_t number_of_points, const void * const overlap_cache_data_void_pointer, double * const f_smoothed, const int number_of_threads, const bool show_output_log = true) noexcept
 try
 {
     smoothing_clear_error();
@@ -174,7 +184,7 @@ try
 }
 SMOOTHING_C_API_CATCH(-1)
 
-extern "C" int smooth_multiple_fields_simultaneously_using_overlap_detection_ctypes(
+SMOOTHING_API int smooth_multiple_fields_simultaneously_using_overlap_detection_ctypes(
     const double * const area_size, const double * const fields,
     const size_t number_of_points, const size_t number_of_fields,
     const void * const overlap_cache_data_void_pointer, double * const smoothed_fields,
@@ -190,47 +200,28 @@ try
 }
 SMOOTHING_C_API_CATCH(-1)
 
-extern "C" int generate_kdtree_cache_data_and_write_to_disk_ctypes(const double * const lat, const double * const lon, const size_t number_of_points, const double smoothing_kernel_radius_in_metres, const char * const kdtree_cache_data_folder, const int number_of_threads, const bool show_output_log = true) noexcept
-try
-{
+SMOOTHING_API int write_kdtree_cache_data_to_disk_ctypes(
+    const void *handle, const char *filename) noexcept
+try {
     smoothing_clear_error();
-    smoothing_kdtree::validate_number_of_threads(number_of_threads);
-    smoothing_kdtree::require_buffer(kdtree_cache_data_folder, 1);
-    generate_kdtree_cache_data_and_write_to_disk(
-        lat, lon, number_of_points, smoothing_kernel_radius_in_metres, string(kdtree_cache_data_folder), number_of_threads, show_output_log);
+    smoothing_kdtree::require_buffer(handle, 1);
+    smoothing_kdtree::require_buffer(filename, 1);
+    saved_s2::write_cache_data_to_disk(*static_cast<const KdTreeCacheData *>(handle), string(filename), false);
     return 0;
 }
 SMOOTHING_C_API_CATCH(-1)
 
-extern "C" int generate_kdtree_cache_data_for_multiple_radii_ctypes(
-    const double *lat,const double *lon,const size_t n,const double *radii,
-    const size_t radius_count,const char *kdtree_cache_data_folder,const int threads, const bool show_output_log = true) noexcept
+SMOOTHING_API void *read_kdtree_cache_data_from_binary_file_ctypes(const char * const filename, const bool show_output_log = true) noexcept
 try
 {
     smoothing_clear_error();
-    smoothing_kdtree::require_buffer(kdtree_cache_data_folder,1);
-    if (radius_count==0) throw invalid_argument("At least one smoothing radius is required.");
-    smoothing_kdtree::require_buffer(radii,radius_count);
-    saved_s2::generate_cache_data_and_write_batched(
-        lat,lon,n,vector<double>(radii,radii+radius_count),string(kdtree_cache_data_folder),threads, show_output_log);
-    return 0;
-}
-SMOOTHING_C_API_CATCH(-1)
-
-extern "C" void *read_kdtree_cache_data_from_binary_file_ctypes(const char * const kdtree_cache_data_folder, const double smoothing_kernel_radius_in_metres, const bool show_output_log = true) noexcept
-try
-{
-    smoothing_clear_error();
-    smoothing_kdtree::require_buffer(kdtree_cache_data_folder, 1);
-    const double radius = cap_smoothing_radius(smoothing_kernel_radius_in_metres);
-    auto kdtree_cache_data = saved_s2::read_cache_data_from_binary_file(saved_s2::make_cache_filename(string(kdtree_cache_data_folder), radius), show_output_log);
-    if (kdtree_cache_data->radius != radius)
-        throw runtime_error("KD-tree cache radius mismatch.");
+    smoothing_kdtree::require_buffer(filename, 1);
+    auto kdtree_cache_data = saved_s2::read_cache_data_from_binary_file(string(filename), show_output_log);
     return kdtree_cache_data.release();
 }
 SMOOTHING_C_API_CATCH(nullptr)
 
-extern "C" int smooth_field_using_kdtree_cache_data_ctypes(const double * const area_size, const double * const f, const size_t number_of_points, const char * const kdtree_cache_data_pointer, double * const f_smoothed, const int number_of_threads, const bool show_output_log = true) noexcept
+SMOOTHING_API int smooth_field_using_kdtree_cache_data_ctypes(const double * const area_size, const double * const f, const size_t number_of_points, const char * const kdtree_cache_data_pointer, double * const f_smoothed, const int number_of_threads, const bool show_output_log = true) noexcept
 try
 {
     smoothing_clear_error();
@@ -241,7 +232,7 @@ try
 }
 SMOOTHING_C_API_CATCH(-1)
 
-extern "C" int smooth_multiple_fields_simultaneously_using_kdtree_cache_data_ctypes(
+SMOOTHING_API int smooth_multiple_fields_simultaneously_using_kdtree_cache_data_ctypes(
     const double *area_size,const double *fields,const size_t number_of_points,
     const size_t number_of_fields,const void *kdtree_cache_data_void_pointer,
     double *smoothed_fields,const int number_of_threads, const bool show_output_log = true) noexcept
@@ -256,7 +247,7 @@ try
 }
 SMOOTHING_C_API_CATCH(-1)
 
-extern "C" int free_kdtree_cache_data_ctypes(void * kdtree_cache_data_void_pointer) noexcept
+SMOOTHING_API int free_kdtree_cache_data_ctypes(void * kdtree_cache_data_void_pointer) noexcept
 try
 {
     smoothing_clear_error();
@@ -266,7 +257,7 @@ try
 }
 SMOOTHING_C_API_CATCH(-1)
 
-extern "C" void *generate_kdtree_cache_data_in_memory_ctypes(const double *lat, const double *lon,
+SMOOTHING_API void *generate_kdtree_cache_data_in_memory_ctypes(const double *lat, const double *lon,
     size_t count, double radius, int number_of_threads, const bool show_output_log = true) noexcept
 try {
     smoothing_clear_error();

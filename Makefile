@@ -4,8 +4,8 @@ CXXFLAGS ?= -O2 -Wall -Wno-unused-result -Wno-unknown-pragmas
 LDFLAGS ?=
 LDLIBS ?=
 
-SOURCE_DIR := source_for_Cxx_shared_library
-TARGET := smoothing_on_sphere_Cxx_shared_library.so
+SOURCE_DIR := src/cpp
+TARGET := src/libsmoothing_on_sphere.so
 SOURCES := $(SOURCE_DIR)/CC_smoothing_on_sphere_python_lib.cc \
            $(SOURCE_DIR)/CU_smoothing_on_sphere_code.cc \
            $(SOURCE_DIR)/CU_kdtree_with_index.cc

@@ -4,15 +4,11 @@ from pathlib import Path
 
 import numpy as np
 from netCDF4 import Dataset
-from smoothing_on_sphere_library import (
-    construct_KdTree,
-    free_KdTree_memory,
-    smooth_field_using_KdTree,
-)
+from smoothing_on_sphere import (construct_KdTree, free_KdTree_memory, smooth_field_using_KdTree,)
 
 # Locate the example inputs and cache files relative to this script.
 data_folder = Path(__file__).resolve().parent
-field_filename = data_folder / "example_data" / "example_field1.nc"
+field_filename = data_folder / "sample_data" / "example_field1.nc"
 # Configure the direct smoothing call and its native console output.
 number_of_threads = 10
 show_output_log = True  # Set False to hide native timings and progress.
@@ -39,16 +35,12 @@ lat_min, lat_max = -10, 10
 lon_min, lon_max = 0, 20
 # Express longitude in 0–360 degrees so the region works with either input convention.
 longitude_degrees_east = np.mod(lon, 360.0)
-missing = (
-    (lat > lat_min) & (lat < lat_max)
-    & (longitude_degrees_east > lon_min) & (longitude_degrees_east < lon_max))
+missing = ((lat > lat_min) & (lat < lat_max) & (longitude_degrees_east > lon_min) & (longitude_degrees_east < lon_max))
 
 # Approximate areas for this regular 0.25-degree latitude/longitude example grid.
 earth_radius = 6_371_000.0
 grid_spacing_in_degrees = 0.25
-area_size = (
-    (np.deg2rad(grid_spacing_in_degrees) * earth_radius) ** 2
-    * np.cos(np.deg2rad(lat)))
+area_size = ((np.deg2rad(grid_spacing_in_degrees) * earth_radius) ** 2 * np.cos(np.deg2rad(lat)))
 # Clamp tiny negative areas caused by floating-point rounding near the poles.
 np.maximum(area_size, 0.0, out=area_size)
 
@@ -61,10 +53,7 @@ f_numeric_only[missing] = 0.0
 kdtree = construct_KdTree(lat, lon, number_of_threads)
 try:
     # Zero-area points are excluded from neighborhood contributions.
-    f_smoothed = smooth_field_using_KdTree(
-        smoothing_kernel_radius_in_metres, kdtree, lat, lon,
-        area_size, f_numeric_only, number_of_threads,
-        show_output_log)
+    f_smoothed = smooth_field_using_KdTree(smoothing_kernel_radius_in_metres, kdtree, lat, lon, area_size, f_numeric_only, number_of_threads, show_output_log)
 finally:
     # Always release the native tree, including when smoothing fails.
     free_KdTree_memory(kdtree)
@@ -80,27 +69,17 @@ from matplotlib.patches import Rectangle
 import cartopy.crs as ccrs
 
 # Use one color scale for the input and smoothed field; NaNs appear white.
-cmap = colors.LinearSegmentedColormap.from_list(
-    "precipitation", ["white", (0.7, 0.7, 1.0), "blue"], 15)
+cmap = colors.LinearSegmentedColormap.from_list("precipitation", ["white", (0.7, 0.7, 1.0), "blue"], 15)
 cmap.set_bad("white")
 fig = plt.figure(figsize=(14, 7))
 # Show the artificial missing-data region before and after smoothing.
-for column, (title, values) in enumerate((
-        ("Input precipitation with missing data", display_original),
-        ("Smoothed precipitation (200 km)", display_smoothed))):
-    ax = fig.add_subplot(
-        1, 2, column + 1,
-        projection=ccrs.Orthographic(central_longitude=0, central_latitude=0))
+for column, (title, values) in enumerate((("Input precipitation with missing data", display_original), ("Smoothed precipitation (200 km)", display_smoothed))):
+    ax = fig.add_subplot(1, 2, column + 1, projection=ccrs.Orthographic(central_longitude=0, central_latitude=0))
     ax.set_global()
     ax.set_title(title)
-    image = ax.pcolormesh(
-        lon_netcdf, lat_netcdf, values,
-        transform=ccrs.PlateCarree(), shading="auto", cmap=cmap,
-        norm=colors.LogNorm(vmin=0.01, vmax=100))
+    image = ax.pcolormesh(lon_netcdf, lat_netcdf, values, transform=ccrs.PlateCarree(), shading="auto", cmap=cmap, norm=colors.LogNorm(vmin=0.01, vmax=100))
     # Outline the same excluded region on both maps.
-    ax.add_patch(Rectangle(
-        (lon_min, lat_min), lon_max - lon_min, lat_max - lat_min,
-        fill=False, edgecolor="grey", transform=ccrs.PlateCarree()))
+    ax.add_patch(Rectangle((lon_min, lat_min), lon_max - lon_min, lat_max - lat_min, fill=False, edgecolor="grey", transform=ccrs.PlateCarree()))
     ax.coastlines(resolution="110m", color="grey")
     fig.colorbar(image, ax=ax, extend="both", shrink=0.6).set_label("Precipitation (mm/6h)")
 # Display the figures without writing smoothed fields to disk.
