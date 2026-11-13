@@ -101,6 +101,14 @@ jobs:
           CIBW_TEST_COMMAND: 'python "{project}/tests/test_smoothing_on_sphere.py"'
           PYTHONUNBUFFERED: '1'
 
+      # Verification inspects ZIP contents and can use a separate host Python.
+      # Set it up after cibuildwheel so macOS always has `python` on PATH.
+      - name: Set up Python for macOS wheel verification
+        if: runner.os == 'macOS'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
       - name: Verify bundled LLVM OpenMP and license in repaired wheels
         shell: bash
         run: |
